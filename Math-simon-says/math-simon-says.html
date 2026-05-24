@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Math: Simon Says</title>
+<link rel="icon" type="image/png" href="assets/icon_logo@4x.png"/>
+<style>
+  /* Load the local Inter fonts */
+  @font-face {
+    font-family: 'Inter';
+    src: url('assets/Inter-VariableFont_opsz,wght.ttf') format('truetype');
+    font-weight: 100 900;
+    font-style: normal;
+  }
+
+  @font-face {
+    font-family: 'Inter';
+    src: url('assets/Inter-Italic-VariableFont_opsz,wght.ttf') format('truetype');
+    font-weight: 100 900;
+    font-style: italic;
+  }
+
+  /* Load the local Hunters K-Pop font */
+  @font-face {
+    font-family: 'Hunters K-Pop';
+    src: url('assets/hunters.otf') format('opentype'); 
+    font-weight: normal;
+    font-style: normal;
+  }
+  
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    background: #000;
+    width: 100vw; height: 100vh;
+    overflow: hidden;
+    font-family: 'Inter', sans-serif;
+  }
+  /* ════════════════════════════════════════
+     BORDER — fixed on top of everything
+  ════════════════════════════════════════ */
+  #border-frame {
+    position: fixed; inset: 0;
+    z-index: 200; pointer-events: none;
+  }
+  #border-frame img { width:100%; height:100%; object-fit:fill; display:block; }
+  
+  /* ════════════════════════════════════════
+     SCORE BADGE
+  ════════════════════════════════════════ */
+  #score-badge {
+    position: fixed;
+    top: 12%;          
+    left: 8%;          
+    z-index: 300;      
+    display: flex; align-items: center; justify-content: center;
+  }
+  
+  #score-badge img { 
+    height: 100px; 
+    width: auto; 
+    display: block; 
+  }
+  
+  #score-val {
+    position: absolute;
+    left: 75%;
+    top: 52%; 
+    transform: translate(-50%, -50%); 
+    font-family: 'Hunters K-Pop', sans-serif;
+    font-size: 2.8rem; 
+    color: #f3bb10;
+    letter-spacing: 2px;
+    line-height: 1;
+    pointer-events: none;
+  }
+  /* ════════════════════════════════════════
+     POSE STATUS
+  ════════════════════════════════════════ */
+  #pose-status {
+    position: fixed;
+    top: 20px; right: 20px;
+    z-index: 250;
+    font-size: 0.58rem; font-weight: 900; letter-spacing: 2px;
+    padding: 3px 8px; border-radius: 5px;
+    border: 1.5px solid #ff3860; color: #ff3860;
+    background: rgba(255,56,96,0.1);
+  }
+  #pose-status.online { border-color:#00ff88; color:#00ff88; background:rgba(0,255,136,0.1); }
+
+  /* ════════════════════════════════════════
+     MAIN LAYOUT — camera fills screen, panel floats right
+  ════════════════════════════════════════ */
+  #main { position: fixed; inset: 0; }
+
+  /* ── CAMERA ── */
+  #cam-area { 
+    position: absolute; 
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 100vw; height: 100vh;
+    max-width: 177.78vh; max-height: 56.25vw;
+  }
+  
+  #video, #canvas {
+    position: absolute; 
+    top: 32px;      
+    left: 25px;     
+    width: 100%;   
+    height: 90%;  
+    object-fit: cover; 
+    transform: scaleX(-1);
+    border-radius: 15px; 
+  }
+
+ /* ── GAME PANEL (Floating Right Side) ── */
+  #game-panel {
+    position: fixed;
+    right: 10%;        
+    top: 0; 
+    bottom: 0;
+    width: 32vw;       
+    max-width: 440px;  
+    min-width: 340px;  
+    z-index: 300;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* All screens sit on top of each other */
+  .screen {
+    width: 100%; 
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 15px;         
+    transition: opacity 0.3s;
+    padding: 45px 35px;
+    background: rgba(0, 0, 0, 0.65); 
+    border-radius: 24px;
+    backdrop-filter: blur(6px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  
+  .screen.hidden { 
+    opacity: 0; 
+    pointer-events: none; 
+    position: absolute; 
+    visibility: hidden;
+  }
+
+  /* ════════════════════════════════════════
+     START SCREEN
+  ════════════════════════════════════════ */
+
+  #logo-img { 
+    width: 80%;       
+    display: block; 
+    margin-bottom: 5px; 
+  }
+
+  .info-asset {
+    width: 100%;
+    display: block;
+  }
+
+  /* ── VALORANT DIAGONAL SHIMMER BUTTON ── */
+  #start-btn {
+    position: relative;
+    display: block;
+    background: none; border: none;
+    cursor: pointer; padding: 0;
+    overflow: hidden;
+    border-radius: 8px;
+    margin-top: 10px;
+    isolation: isolate;
+  }
+  #start-btn img {
+    display: block;
+    width: 155px;
+    position: relative; z-index: 1;
+    transition: filter 0.2s, transform 0.15s;
+  }
+  #start-btn:active img { filter: brightness(0.88); transform: scale(0.97); }
+
+  #start-btn::before,
+  #start-btn::after {
+    content: '';
+    position: absolute;
+    top: 0; bottom: 0;
+    width: 40%;
+    background: linear-gradient(
+      to bottom right,
+      transparent 25%,
+      rgba(255,255,255,0.55) 50%,
+      transparent 75%
+    );
+    transform: skewX(-18deg);
+    transition: left 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 2;
+    pointer-events: none;
+  }
+  #start-btn::before {
+    left: -60%;
+    background: linear-gradient(
+      to bottom right,
+      transparent 20%,
+      rgba(255, 220, 0, 0.6) 50%,
+      transparent 80%
+    );
+  }
+  #start-btn::after {
+    left: -100%;
+    background: linear-gradient(
+      to bottom right,
+      transparent 20%,
+      rgba(255, 255, 255, 0.4) 50%,
+      transparent 80%
+    );
+    transition-delay: 0.06s;
+  }
+  #start-btn:hover::before { left: 130%; }
+  #start-btn:hover::after  { left: 130%; }
+  #start-btn:hover img { filter: brightness(1.18); }
+
+  /* ════════════════════════════════════════
+     GAME SCREEN
+  ════════════════════════════════════════ */
+  #game-screen { justify-content: center; gap: 25px; } 
+
+  /* SCALED UP TIMER */
+  #timer-ring-wrap { position: relative; width: 85px; height: 85px; flex-shrink: 0; }
+  #timer-svg { width: 85px; height: 85px; transform: rotate(-90deg); }
+  #timer-track { fill: none; stroke: rgba(255,255,255,0.1); stroke-width: 6; }
+  #timer-fill {
+    fill: none; stroke: #f5a800; stroke-width: 6; stroke-linecap: round;
+    stroke-dasharray: 188.5; stroke-dashoffset: 0;
+    filter: drop-shadow(0 0 5px #f5a800); transition: stroke 0.3s;
+  }
+  #timer-num {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Hunters K-Pop', sans-serif; 
+    font-size: 2.2rem; 
+    color: #f5a800; text-shadow: 0 0 10px #f5a800;
+  }
+  
+  /* SCALED UP MATH PROBLEM */
+  #math-problem {
+    font-family: 'Hunters K-Pop', sans-serif; 
+    font-size: 3.8rem; 
+    text-align: center; color: #fff; letter-spacing: 2px;
+    text-shadow: 2px 2px 0 #000;
+  }
+  #question-mark { color: #f5a800; text-shadow: 0 0 18px #f5a800; }
+  
+  /* SCALED UP ACTION CARDS */
+  .action-cards { display: flex; flex-direction: column; gap: 16px; width: 100%; }
+  .action-card {
+    display: flex; align-items: center; gap: 12px;
+    padding: 16px 22px; 
+    border-radius: 12px; 
+    border: 3px solid;  
+  }
+  .action-card.jump-card  { border-color: #f5a800; background: rgba(245,168,0,0.12); }
+  .action-card.squat-card { border-color: #8b2fc9; background: rgba(139,47,201,0.12); }
+  
+  .action-card .act-icon { font-size: 2rem; } 
+  .action-card .act-label {
+    font-family: 'Hunters K-Pop', sans-serif; 
+    font-size: 1.4rem; 
+    letter-spacing: 2px;
+  }
+  .jump-card  .act-label { color: #f5a800; }
+  .squat-card .act-label { color: #8b2fc9; }
+  
+  .action-card .act-answer {
+    font-family: 'Hunters K-Pop', sans-serif; 
+    font-size: 2.8rem; 
+    margin-left: auto; color: #fff; text-shadow: 1px 1px 0 #000;
+  }
+
+  #progress-dots { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 10px; }
+  .dot {
+    width: 14px; height: 14px; 
+    border-radius: 50%;
+    background: rgba(255,255,255,0.15);
+    border: 1.5px solid rgba(255,255,255,0.2);
+    transition: all 0.3s;
+  }
+  .dot.correct { background:#00ff88; border-color:#00ff88; box-shadow:0 0 5px #00ff88; }
+  .dot.wrong   { background:#ff3860; border-color:#ff3860; box-shadow:0 0 5px #ff3860; }
+  
+  #feedback-overlay {
+    position: fixed; 
+    inset: 0; z-index: 300;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s;
+  }
+  #feedback-overlay.show { opacity: 1; }
+  #feedback-overlay.correct { background: rgba(0,255,136,0.1); }
+  #feedback-overlay.wrong   { background: rgba(255,56,96,0.1); }
+  #feedback-img {
+    max-width: 60%;
+    height: auto;
+    animation: feedbounce 0.4s ease-out;
+  }
+
+  @keyframes feedbounce {
+    0%   { transform: scale(0.3) rotate(-8deg); }
+    60%  { transform: scale(1.12) rotate(2deg); }
+    100% { transform: scale(1) rotate(0deg); }
+  }
+
+  /* ════════════════════════════════════════
+     END SCREEN
+  ════════════════════════════════════════ */
+  #end-screen { gap: 18px; }
+  #end-title {
+    font-family: 'Hunters K-Pop', sans-serif; font-size: 2.4rem;
+    color: #f5a800; letter-spacing: 3px;
+    text-align: center; text-shadow: 2px 2px 0 #000;
+  }
+  #final-score-wrap {
+    display: flex; flex-direction: column; align-items: center;
+    background: rgba(139,47,201,0.2); border: 2px solid #8b2fc9;
+    border-radius: 12px; padding: 16px 32px; width: 100%;
+  }
+  #final-score-label { font-size: 0.75rem; letter-spacing: 3px; color: #8b2fc9; }
+  #final-score-num {
+    font-family: 'Hunters K-Pop', sans-serif; font-size: 5rem;
+    color: #f5a800; text-shadow: 0 0 18px #f5a800; line-height: 1.1;
+  }
+  #final-grade { font-size: 0.95rem; font-weight: 900; color: #00ff88; text-align: center; }
+
+  #play-again-btn {
+    position: relative;
+    background: none; border: none; cursor: pointer; padding: 0;
+    overflow: hidden; border-radius: 8px; isolation: isolate;
+    margin-top: 10px;
+  }
+  #play-again-btn img {
+    height: 55px; width: auto; display: block;
+    position: relative; z-index:1;
+    transition: filter 0.2s;
+  }
+  #play-again-btn::before {
+    content: '';
+    position: absolute; top: 0; bottom: 0;
+    width: 40%; left: -60%;
+    background: linear-gradient(to bottom right, transparent 20%, rgba(255,220,0,0.6) 50%, transparent 80%);
+    transform: skewX(-18deg);
+    transition: left 0.45s cubic-bezier(0.4,0,0.2,1);
+    z-index: 2; pointer-events: none;
+  }
+  #play-again-btn:hover::before { left: 130%; }
+  #play-again-btn:hover img { filter: brightness(1.18); }
+</style>
+</head>
+<body>
+
+<div id="border-frame"><img src="assets/border@4x.png" alt=""/></div>
+
+<div id="score-badge">
+  <img src="assets/score@4x.png" alt="score badge"/>
+  <span id="score-val">0</span>
+</div>
+
+<div id="pose-status">● NO POSE</div>
+
+<div id="main">
+
+  <div id="cam-area">
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="canvas"></canvas>
+    <div id="move-flash"></div>
+  </div>
+
+  <div id="game-panel">
+
+    <div class="screen" id="start-screen">
+      <img id="logo-img" src="assets/lesson_math@4x.png" alt="Math Simon Says"/>
+      <img class="info-asset" src="assets/How to play@4x.png" alt="How to Play"/>
+      <img class="info-asset" src="assets/Example@4x.png" alt="Example"/>
+      <button id="start-btn" onclick="startGame()">
+        <img src="assets/start_btn@4x.png" alt="Start!"/>
+      </button>
+    </div>
+
+    <div class="screen hidden" id="game-screen">
+      <div id="timer-ring-wrap">
+        <svg id="timer-svg" viewBox="0 0 72 72">
+          <circle id="timer-track" cx="36" cy="36" r="30"/>
+          <circle id="timer-fill"  cx="36" cy="36" r="30"/>
+        </svg>
+        <div id="timer-num">10</div>
+      </div>
+
+      <div id="math-problem">3 + 4 = <span id="question-mark">?</span></div>
+
+      <div class="action-cards">
+        <div class="action-card jump-card">
+          <span class="act-icon">⬆️</span>
+          <span class="act-label">JUMP</span>
+          <span class="act-answer" id="jump-answer">7</span>
+        </div>
+        <div class="action-card squat-card">
+          <span class="act-icon">⬇️</span>
+          <span class="act-label">SQUAT</span>
+          <span class="act-answer" id="squat-answer">5</span>
+        </div>
+      </div>
+      <div id="progress-dots"></div>
+    </div>
+
+    <div class="screen hidden" id="end-screen">
+      <div id="end-title">GAME OVER!</div>
+      <div id="final-score-wrap">
+        <div id="final-score-label">YOUR SCORE</div>
+        <div id="final-score-num">0</div>
+        <div id="final-grade">Keep it up!</div>
+      </div>
+      <button id="play-again-btn" onclick="returnToMenu()">
+        <img src="assets/try again@4x.png" alt="Try Again!"/>
+      </button>
+    </div>
+
+  </div>
+</div>
+
+<div id="feedback-overlay">
+  <img id="feedback-img" src="assets/correct@4x.png" alt=""/>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+
+<script>
+// ── DOM ──────────────────────────────────────────────────────
+const videoEl         = document.getElementById('video');
+const canvasEl        = document.getElementById('canvas');
+const ctx             = canvasEl.getContext('2d');
+const poseStatus      = document.getElementById('pose-status');
+const moveFlash       = document.getElementById('move-flash');
+const scoreVal        = document.getElementById('score-val');
+const startScreen     = document.getElementById('start-screen');
+const gameScreen      = document.getElementById('game-screen');
+const endScreen       = document.getElementById('end-screen');
+const mathProblemEl   = document.getElementById('math-problem');
+const jumpAnswerEl    = document.getElementById('jump-answer');
+const squatAnswerEl   = document.getElementById('squat-answer');
+const timerNumEl      = document.getElementById('timer-num');
+const timerFillEl     = document.getElementById('timer-fill');
+const feedbackOverlay = document.getElementById('feedback-overlay');
+const feedbackImgEl   = document.getElementById('feedback-img');
+const progressDots    = document.getElementById('progress-dots');
+const finalScoreNum   = document.getElementById('final-score-num');
+const finalGrade      = document.getElementById('final-grade');
+
+// ── CONFIG ────────────────────────────────────────────────────
+const TOTAL_ROUNDS  = 8;
+const TIMER_SECS    = 10;
+const CIRCUMFERENCE = 2 * Math.PI * 30;
+
+// ── POSE STATE ────────────────────────────────────────────────
+let latestLandmarks  = null;
+const HIST_LEN       = 8;   // frames of history kept
+let shoulderYHistory = [];  // for jump AND squat (shoulder Y tracks body height)
+let hipYHistory      = [];  // backup: hip Y also tracks sinking
+let jumpCooldown     = false;
+let squatCooldown    = false;
+// Jump: shoulders rise → Y value decreases (MediaPipe Y=0 at top)
+const JUMP_THRESH    = 0.022;
+// Squat: shoulders sink → Y value increases
+const SQUAT_THRESH   = 0.022;
+
+// ── GAME STATE ────────────────────────────────────────────────
+let score=0, round=0, roundActive=false;
+let timerInterval=null, timerLeft=TIMER_SECS;
+let correctAction='', roundResults=[];
+
+// ── HELPERS ───────────────────────────────────────────────────
+function rand(min,max){ return Math.floor(Math.random()*(max-min+1))+min; }
+function getWrongAnswers(correct){
+  const pool=[];
+  for(let d=-3;d<=3;d++){ if(d!==0){const w=correct+d; if(w>=0&&w<=20)pool.push(w);} }
+  return pool;
+}
+
+// ── MEDIAPIPE ─────────────────────────────────────────────────
+const pose = new Pose({ locateFile: f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}` });
+pose.setOptions({
+  modelComplexity:1, smoothLandmarks:true, enableSegmentation:false,
+  minDetectionConfidence:0.5, minTrackingConfidence:0.5
+});
+pose.onResults(onPoseResults);
+
+const camera = new Camera(videoEl, {
+  onFrame: async()=>{
+    canvasEl.width  = videoEl.videoWidth  || 640;
+    canvasEl.height = videoEl.videoHeight || 480;
+    await pose.send({image:videoEl});
+  },
+  width:640, height:480
+});
+camera.start();
+
+function onPoseResults(results){
+  ctx.clearRect(0,0,canvasEl.width,canvasEl.height);
+  if(!results.poseLandmarks) return;
+  latestLandmarks = results.poseLandmarks;
+
+  drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS,
+    {color:'rgba(245,168,0,0.55)', lineWidth:2});
+  drawLandmarks(ctx, results.poseLandmarks,
+    {color:'#f5a800', fillColor:'rgba(245,168,0,0.25)', lineWidth:1, radius:4});
+
+  poseStatus.textContent = '● POSE ON';
+  poseStatus.classList.add('online');
+
+  if(roundActive){ detectJump(); detectSquat(); }
+}
+
+// ── MOVEMENT DETECTION ────────────────────────────────────────
+function detectJump(){
+  if(!latestLandmarks||jumpCooldown) return;
+  const lS=latestLandmarks[11], rS=latestLandmarks[12];
+  if(!lS||!rS) return;
+  const avgY=(lS.y+rS.y)/2;
+  shoulderYHistory.push(avgY);
+  if(shoulderYHistory.length>HIST_LEN) shoulderYHistory.shift();
+  if(shoulderYHistory.length<HIST_LEN) return;
+  // Jump: oldest Y > newest Y  →  shoulders moved UP (Y decreased)
+  const delta=shoulderYHistory[0]-shoulderYHistory[shoulderYHistory.length-1];
+  if(delta>JUMP_THRESH) triggerMove('jump');
+}
+
+function detectSquat(){
+  if(!latestLandmarks||squatCooldown||jumpCooldown) return;
+  const lS=latestLandmarks[11], rS=latestLandmarks[12];
+  const lH=latestLandmarks[23], rH=latestLandmarks[24];
+  if(!lS||!rS||!lH||!rH) return;
+
+  // Method 1 — shoulder Y history: squat makes shoulders SINK (Y increases)
+  const avgShoulderY=(lS.y+rS.y)/2;
+  shoulderYHistory.push(avgShoulderY);
+  if(shoulderYHistory.length>HIST_LEN) shoulderYHistory.shift();
+
+  // Also track hip Y for confirmation
+  const avgHipY=(lH.y+rH.y)/2;
+  hipYHistory.push(avgHipY);
+  if(hipYHistory.length>HIST_LEN) hipYHistory.shift();
+
+  if(shoulderYHistory.length<HIST_LEN) return;
+
+  // Squat: newest Y > oldest Y  →  shoulders moved DOWN (Y increased)
+  const shoulderDelta=shoulderYHistory[shoulderYHistory.length-1]-shoulderYHistory[0];
+  const hipDelta=hipYHistory.length>=HIST_LEN
+    ? hipYHistory[hipYHistory.length-1]-hipYHistory[0] : 0;
+
+  // Either shoulders sank OR hips sank — one is enough
+  if(shoulderDelta>SQUAT_THRESH || hipDelta>SQUAT_THRESH){
+    triggerMove('squat');
+  }
+}
+
+function triggerMove(type){
+  if(!roundActive) return;
+  moveFlash.textContent = type==='jump' ? '⬆ JUMP!' : '⬇ SQUAT!';
+  moveFlash.className   = 'show '+type;
+  if(type==='jump'){
+    jumpCooldown=true; setTimeout(()=>jumpCooldown=false,1200);
+  } else {
+    squatCooldown=true; setTimeout(()=>squatCooldown=false,1200);
+  }
+  setTimeout(()=>moveFlash.className='',800);
+  handleAnswer(type);
+}
+
+// ── SCREENS ───────────────────────────────────────────────────
+function showScreen(name){
+  [startScreen,gameScreen,endScreen].forEach(s=>s.classList.add('hidden'));
+  document.getElementById(name+'-screen').classList.remove('hidden');
+}
+
+// ── GAME LOGIC ────────────────────────────────────────────────
+function startGame(){
+  score=0; round=0; roundResults=[];
+  scoreVal.textContent='0';
+  progressDots.innerHTML='';
+  for(let i=0;i<TOTAL_ROUNDS;i++){
+    const d=document.createElement('div');
+    d.className='dot'; d.id='dot-'+i;
+    progressDots.appendChild(d);
+  }
+  showScreen('game');
+  nextRound();
+}
+
+function nextRound(){
+  if(round>=TOTAL_ROUNDS){ endGame(); return; }
+  clearInterval(timerInterval);
+  hideFeedback();
+  roundActive=false;
+  shoulderYHistory=[];
+  hipYHistory=[];
+
+  const op=Math.random()<0.5?'+':'-';
+  let a,b,answer;
+  if(op==='+'){ a=rand(1,10); b=rand(1,10); answer=a+b; }
+  else        { a=rand(2,10); b=rand(1,a);  answer=a-b; }
+
+  const wrongPool=getWrongAnswers(answer);
+  const wrong=wrongPool[Math.floor(Math.random()*wrongPool.length)];
+  correctAction=Math.random()<0.5?'jump':'squat';
+  jumpAnswerEl.textContent  = correctAction==='jump'  ? answer : wrong;
+  squatAnswerEl.textContent = correctAction==='squat' ? answer : wrong;
+  mathProblemEl.innerHTML   = `${a} ${op} ${b} = <span id="question-mark">?</span>`;
+
+  timerLeft=TIMER_SECS;
+  updateTimerRing(TIMER_SECS,TIMER_SECS);
+  timerNumEl.textContent=TIMER_SECS;
+  timerFillEl.style.stroke='#f5a800';
+
+  roundActive=true;
+  timerInterval=setInterval(tickTimer,1000);
+}
+
+function tickTimer(){
+  timerLeft--;
+  updateTimerRing(timerLeft,TIMER_SECS);
+  timerNumEl.textContent=timerLeft;
+  if(timerLeft<=3)      timerFillEl.style.stroke='#ff3860';
+  else if(timerLeft<=5) timerFillEl.style.stroke='#ff8c00';
+
+  if(timerLeft<=0){
+    clearInterval(timerInterval);
+    roundActive=false;
+    showFeedback(false);
+    recordRound(false);
+    setTimeout(()=>{ round++; nextRound(); },1800);
+  }
+}
+
+function updateTimerRing(c,t){
+  timerFillEl.style.strokeDashoffset = CIRCUMFERENCE*(1-c/t);
+}
+
+function handleAnswer(action){
+  if(!roundActive) return;
+  clearInterval(timerInterval);
+  roundActive=false;
+  const correct=action===correctAction;
+  if(correct){ score++; scoreVal.textContent=score; }
+  showFeedback(correct);
+  recordRound(correct);
+  setTimeout(()=>{ round++; nextRound(); },1600);
+}
+
+function showFeedback(correct){
+  if(correct){
+    const imgs=['assets/correct@4x.png','assets/Brilliant@4x.png'];
+    feedbackImgEl.src=imgs[Math.floor(Math.random()*imgs.length)];
+  } else {
+    feedbackImgEl.src='assets/try again@4x.png';
+  }
+  feedbackImgEl.style.animation='none';
+  feedbackImgEl.offsetHeight; 
+  feedbackImgEl.style.animation='';
+  feedbackOverlay.className='show '+(correct?'correct':'wrong');
+}
+
+function hideFeedback(){ feedbackOverlay.className=''; }
+
+function recordRound(correct){
+  roundResults.push(correct);
+  const dot=document.getElementById('dot-'+round);
+  if(dot) dot.className='dot '+(correct?'correct':'wrong');
+}
+
+function endGame(){
+  showScreen('end');
+  finalScoreNum.textContent=score;
+  const pct=score/TOTAL_ROUNDS;
+  if(pct>=0.875)      finalGrade.textContent='SUPERSTAR! 🌟🌟🌟';
+  else if(pct>=0.625) finalGrade.textContent='GREAT JOB! 🎉';
+  else if(pct>=0.375) finalGrade.textContent='KEEP PRACTISING! 💪';
+  else                finalGrade.textContent="YOU'VE GOT THIS! 🚀";
+}
+
+// ── NEW FUNCTION: Return to menu ──
+function returnToMenu() {
+  scoreVal.textContent = '0'; 
+  showScreen('start');
+}
+
+// ══════════════════════════════════════════════════════
+// AUDIO ENGINE — playful kids SFX + looping BGM
+// ══════════════════════════════════════════════════════
+const AC = new (window.AudioContext || window.webkitAudioContext)();
+const masterVol = AC.createGain(); masterVol.gain.value = 0.8; masterVol.connect(AC.destination);
+
+// Resume on first interaction
+function resumeAC(){ if(AC.state==='suspended') AC.resume(); }
+['pointerdown','touchstart','keydown'].forEach(e=>document.addEventListener(e,resumeAC,{once:true}));
+
+function playOsc(type,freq,dur,vol,dest=masterVol){
+  try{
+    const o=AC.createOscillator(), g=AC.createGain();
+    o.type=type; o.frequency.value=freq;
+    g.gain.setValueAtTime(vol,AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+dur);
+    o.connect(g); g.connect(dest);
+    o.start(); o.stop(AC.currentTime+dur);
+  }catch(e){}
+}
+function playSlide(f1,f2,dur,vol,type='sine',dest=masterVol){
+  try{
+    const o=AC.createOscillator(), g=AC.createGain();
+    o.type=type;
+    o.frequency.setValueAtTime(f1,AC.currentTime);
+    o.frequency.exponentialRampToValueAtTime(f2,AC.currentTime+dur);
+    g.gain.setValueAtTime(vol,AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+dur);
+    o.connect(g); g.connect(dest);
+    o.start(); o.stop(AC.currentTime+dur);
+  }catch(e){}
+}
+function playNoise(dur,vol,lpFreq=2000,dest=masterVol){
+  try{
+    const buf=AC.createBuffer(1,AC.sampleRate*dur,AC.sampleRate);
+    const d=buf.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
+    const src=AC.createBufferSource(), g=AC.createGain(), f=AC.createBiquadFilter();
+    f.type='lowpass'; f.frequency.value=lpFreq;
+    src.buffer=buf; src.connect(f); f.connect(g); g.connect(dest);
+    g.gain.setValueAtTime(vol,AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+dur);
+    src.start(); src.stop(AC.currentTime+dur);
+  }catch(e){}
+}
+
+// ── SFX ──────────────────────────────────────────────
+const SFX = {
+  // Button click — happy little pop
+  click: ()=>{
+    playSlide(520,780,.08,.12,'square');
+    playOsc('sine',1040,.06,.05);
+  },
+  // New question — sparkly rising arp
+  newQuestion: ()=>{
+    const notes=[392,494,587,784];
+    notes.forEach((n,i)=>setTimeout(()=>{ playOsc('sine',n,.18,.10); playOsc('triangle',n*2,.12,.04); },i*55));
+  },
+  // Jump detected — bouncy spring up
+  jump: ()=>{
+    playSlide(300,900,.15,.18,'sine');
+    playOsc('square',900,.06,.06);
+    setTimeout(()=>playSlide(900,600,.12,.08,'sine'),90);
+  },
+  // Squat detected — deep boing down
+  squat: ()=>{
+    playSlide(600,200,.18,.18,'sine');
+    playOsc('sine',200,.14,.08);
+  },
+  // Correct answer — triumphant jingle
+  correct: ()=>{
+    const melody=[523,659,784,1047];
+    melody.forEach((n,i)=>setTimeout(()=>{
+      playOsc('sine',n,.22,.14);
+      playOsc('triangle',n/2,.18,.05);
+    },i*70));
+    setTimeout(()=>playNoise(.08,.04,4000),0);
+  },
+  // Wrong answer — sad trombone wah-wah
+  wrong: ()=>{
+    playSlide(440,330,.18,.14,'sawtooth');
+    setTimeout(()=>playSlide(330,250,.22,.12,'sawtooth'),160);
+    setTimeout(()=>playSlide(250,180,.26,.10,'sawtooth'),330);
+    setTimeout(()=>playNoise(.12,.03,800),0);
+  },
+  // Timer tick — soft metronome click
+  tick: ()=>{ playOsc('sine',880,.04,.04); },
+  // Urgent tick (last 3s) — sharp beep
+  urgentTick: ()=>{
+    playOsc('square',1200,.05,.08);
+    playOsc('sine',1600,.03,.04);
+  },
+  // Time out — descending doom
+  timeout: ()=>{
+    playSlide(440,220,.35,.15,'sawtooth');
+    setTimeout(()=>playSlide(220,110,.4,.12,'sawtooth'),300);
+  },
+  // Game over — fanfare ending
+  gameOver: ()=>{
+    const melody=[523,392,330,262];
+    melody.forEach((n,i)=>setTimeout(()=>playOsc('sawtooth',n,.28,.10),i*90));
+    setTimeout(()=>{ playOsc('sine',196,.6,.12); playOsc('sine',262,.6,.08); },380);
+  },
+  // High score — sparkle burst
+  superstar: ()=>{
+    [523,659,784,880,1047,1319].forEach((n,i)=>setTimeout(()=>{
+      playOsc('sine',n,.20,.12);
+      playOsc('triangle',n*2,.14,.04);
+    },i*60));
+    setTimeout(()=>playNoise(.1,.05,6000),50);
+  },
+};
+
+// ── BACKGROUND MUSIC ─────────────────────────────────
+// Bright, bouncy, playful loop — xylophone-style pentatonic arp
+// + light percussion + happy bass line
+let bgmRunning = false;
+let bgmGain = null;
+
+function startBGM(){
+  if(bgmRunning) return; bgmRunning=true;
+  bgmGain = AC.createGain(); bgmGain.gain.value=0.045; bgmGain.connect(AC.destination);
+
+  // Reverb
+  const rev=AC.createConvolver();
+  const rb=AC.createBuffer(2,AC.sampleRate*1.2,AC.sampleRate);
+  for(let c=0;c<2;c++){const d=rb.getChannelData(c);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,3);}
+  rev.buffer=rb;
+  const revG=AC.createGain();revG.gain.value=0.35;
+  bgmGain.connect(rev);rev.connect(revG);revG.connect(AC.destination);
+
+  const BPM=124;
+  const beat=60/BPM; // seconds per beat
+  const bar=beat*4;
+
+  // C major pentatonic — C D E G A
+  const PENTA=[262,294,330,392,440,523,587,659,784,880];
+  // Happy bass line: C G A F pattern
+  const BASS=[131,196,220,175];
+  // Melody patterns (indices into PENTA)
+  const PATTERNS=[
+    [4,6,7,9,7,6,4,6],[6,7,9,6,7,4,6,7],[2,4,6,7,6,4,2,4],[4,6,4,2,4,6,7,9]
+  ];
+  let patIdx=0, melPos=0;
+
+  function playXylo(freq,dur,vol){
+    const o=AC.createOscillator(),g=AC.createGain(),f=AC.createBiquadFilter();
+    f.type='peaking';f.frequency.value=1800;f.gain.value=6;
+    o.type='triangle';o.frequency.value=freq;
+    g.gain.setValueAtTime(vol,AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+dur);
+    o.connect(f);f.connect(g);g.connect(bgmGain);
+    o.start();o.stop(AC.currentTime+dur);
+  }
+
+  function playBass(freq,dur,vol){
+    const o=AC.createOscillator(),g=AC.createGain();
+    o.type='sine';o.frequency.value=freq;
+    g.gain.setValueAtTime(vol,AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+dur*0.8);
+    o.connect(g);g.connect(bgmGain);
+    o.start();o.stop(AC.currentTime+dur);
+  }
+
+  function playKick(){
+    const o=AC.createOscillator(),g=AC.createGain();
+    o.type='sine';o.frequency.setValueAtTime(160,AC.currentTime);
+    o.frequency.exponentialRampToValueAtTime(40,AC.currentTime+0.08);
+    g.gain.setValueAtTime(0.6,AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+0.12);
+    o.connect(g);g.connect(bgmGain);
+    o.start();o.stop(AC.currentTime+0.14);
+  }
+
+  function playSnare(){
+    playNoise(0.08,0.28,3000,bgmGain);
+    const o=AC.createOscillator(),g=AC.createGain();
+    o.type='sine';o.frequency.value=220;
+    g.gain.setValueAtTime(0.25,AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+0.07);
+    o.connect(g);g.connect(bgmGain);
+    o.start();o.stop(AC.currentTime+0.09);
+  }
+
+  function playHihat(){
+    playNoise(0.04,0.12,8000,bgmGain);
+  }
+
+  let step=0;
+  function scheduleBeat(){
+    if(!bgmRunning)return;
+    const t=AC.currentTime;
+    const beatInBar=step%4;
+    const pattern=PATTERNS[patIdx%PATTERNS.length];
+    const melNote=PENTA[pattern[melPos%pattern.length]];
+    melPos++;
+
+    // Melody xylophone
+    playXylo(melNote, beat*0.7, 0.55);
+
+    // Bass every bar start + beat 3
+    if(beatInBar===0||beatInBar===2) playBass(BASS[Math.floor(step/4)%BASS.length], beat*0.9, 0.7);
+
+    // Kick on 1 and 3
+    if(beatInBar===0||beatInBar===2) playKick();
+    // Snare on 2 and 4
+    if(beatInBar===1||beatInBar===3) playSnare();
+    // Hihat every beat + offbeat
+    playHihat();
+    setTimeout(()=>playHihat(),beat*500*0.5);
+
+    // Change pattern every 2 bars
+    if(step%8===7) patIdx++;
+
+    step++;
+    setTimeout(scheduleBeat, beat*1000*0.98);
+  }
+
+  scheduleBeat();
+}
+
+function stopBGM(){
+  bgmRunning=false;
+  if(bgmGain){ bgmGain.gain.setTargetAtTime(0,AC.currentTime,0.3); }
+}
+
+// ── HOOK SFX INTO GAME EVENTS ─────────────────────────────────
+// Patch startGame
+const _origStartGame=startGame;
+window.startGame=function(){
+  resumeAC();
+  SFX.click();
+  startBGM();
+  _origStartGame();
+  setTimeout(()=>SFX.newQuestion(),400);
+};
+
+// Patch returnToMenu
+const _origReturnToMenu=returnToMenu;
+window.returnToMenu=function(){
+  SFX.click();
+  _origReturnToMenu();
+};
+
+// Override nextRound to play newQuestion sound
+const _origNextRound=nextRound;
+window.nextRound=function(){
+  _origNextRound();
+  if(round<TOTAL_ROUNDS) setTimeout(()=>SFX.newQuestion(),200);
+};
+
+// Override tickTimer to play tick sounds
+const _origTickTimer=tickTimer;
+window.tickTimer=function(){
+  _origTickTimer();
+  if(timerLeft>3) SFX.tick();
+  else if(timerLeft>0) SFX.urgentTick();
+  else SFX.timeout();
+};
+
+// Override handleAnswer for correct/wrong sounds
+const _origHandleAnswer=handleAnswer;
+window.handleAnswer=function(action){
+  const correct=action===correctAction;
+  if(correct) SFX.correct();
+  else SFX.wrong();
+  _origHandleAnswer(action);
+};
+
+// Override triggerMove for jump/squat sounds
+const _origTriggerMove=triggerMove;
+window.triggerMove=function(type){
+  if(type==='jump') SFX.jump();
+  else SFX.squat();
+  _origTriggerMove(type);
+};
+
+// Override endGame for game-over sound
+const _origEndGame=endGame;
+window.endGame=function(){
+  _origEndGame();
+  const pct=score/TOTAL_ROUNDS;
+  if(pct>=0.875) setTimeout(()=>SFX.superstar(),300);
+  else setTimeout(()=>SFX.gameOver(),300);
+};
+
+</script>
+</body>
+</html>

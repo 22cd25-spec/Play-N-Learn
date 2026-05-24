@@ -1,0 +1,2128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='18' fill='%2333aaff'/><ellipse cx='50' cy='50' rx='42' ry='14' fill='none' stroke='%2333aaff' stroke-width='4' transform='rotate(0 50 50)'/><ellipse cx='50' cy='50' rx='42' ry='14' fill='none' stroke='%23ff4422' stroke-width='4' transform='rotate(60 50 50)'/><ellipse cx='50' cy='50' rx='42' ry='14' fill='none' stroke='%2399ff33' stroke-width='4' transform='rotate(120 50 50)'/></svg>">
+<title>Plasma Elements</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;background:#000;overflow:hidden;font-family:'Courier New',monospace}
+canvas{display:block;position:fixed;top:0;left:0;z-index:1}
+video{display:block;position:fixed;top:0;left:0;width:100%;height:100%;
+  object-fit:cover;z-index:0;opacity:0;pointer-events:none;transform:scaleX(-1)}
+
+#overlay{position:fixed;inset:0;background:#000;z-index:50;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:14px;transition:opacity .8s}
+#overlay h1{color:rgba(255,255,255,.65);font-size:12px;letter-spacing:7px;font-weight:400}
+#overlay p{color:rgba(255,255,255,.2);font-size:10px;letter-spacing:3px}
+.spin{width:30px;height:30px;border:1.5px solid rgba(255,255,255,.07);
+  border-top-color:rgba(100,180,255,.5);border-radius:50%;animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+#toast{position:fixed;top:12%;left:50%;transform:translateX(-50%);
+  color:#ffd700;font:bold 13px 'Courier New',monospace;letter-spacing:3px;
+  text-align:center;z-index:30;pointer-events:none;opacity:0;transition:opacity .3s;
+  text-shadow:0 0 16px rgba(255,215,0,.5);white-space:nowrap}
+
+#disc{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);
+  color:rgba(255,255,255,.18);font:9px 'Courier New',monospace;letter-spacing:1.5px;
+  text-align:center;z-index:10;pointer-events:none;max-width:92vw;line-height:2.2}
+
+#hud{position:fixed;bottom:30px;left:12px;color:rgba(255,255,255,.12);
+  font:9px/1.8 'Courier New',monospace;z-index:10;pointer-events:none;white-space:pre}
+
+#legend{position:fixed;right:10px;top:50%;transform:translateY(-50%);
+  z-index:10;display:flex;flex-direction:column;gap:4px;pointer-events:none}
+#border-frame{position:fixed;inset:0;width:100%;height:100%;
+  background:url('assets/border@4x.png') no-repeat center center/100% 100%;
+  z-index:20;pointer-events:none;opacity:0.82;}
+.leg{display:flex;align-items:center;gap:5px;font:8px 'Courier New',monospace;
+  color:rgba(255,255,255,.28);letter-spacing:.5px;white-space:nowrap}
+.legdot{width:6px;height:6px;border-radius:50%;flex-shrink:0;opacity:.8}
+#hint{position:fixed;bottom:52px;left:50%;transform:translateX(-50%);
+  background:rgba(0,0,0,.72);border:1px solid rgba(255,215,0,.28);border-radius:10px;
+  padding:10px 18px;color:#ffd700;font:bold 11px 'Courier New',monospace;letter-spacing:2px;
+  text-align:center;z-index:30;pointer-events:none;opacity:0;transition:opacity .5s;
+  text-shadow:0 0 10px rgba(255,215,0,.4);white-space:nowrap}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<video id="v" playsinline autoplay muted></video>
+<div id="overlay"><div class="spin"></div><h1 id="ot">PLASMA ELEMENTS</h1><p id="os">initializing…</p></div>
+<div id="toast"></div>
+<div id="disc">pinch to grab · drag near another atom to react · spread fingers to zoom · drop anywhere to place</div>
+<div id="hud"></div>
+<div id="legend"></div>
+<div id="border-frame"></div>
+<div id="hint" id="hint"></div>
+
+<script>
+'use strict';
+const TAU=Math.PI*2, rand=(a,b)=>a+Math.random()*(b-a), clamp=(v,a,b)=>v<a?a:v>b?b:v, lerp=(a,b,t)=>a+(b-a)*t;
+function rgba(h,a){const r=parseInt(h.slice(1,3),16),g=parseInt(h.slice(3,5),16),b=parseInt(h.slice(5,7),16);return`rgba(${r},${g},${b},${a})`;}
+
+// ── AUDIO ─────────────────────────────────────────────────────────────────────
+const AC=new(window.AudioContext||window.webkitAudioContext)();
+const masterGain=AC.createGain(); masterGain.gain.value=0.82; masterGain.connect(AC.destination);
+function resumeAC(){
+  if(AC.state==='suspended')AC.resume().then(startBGM);
+  else startBGM();
+}
+['pointerdown','touchstart'].forEach(e=>document.addEventListener(e,resumeAC,{once:true}));
+
+function osc(type,freq,dur,vol,dest=masterGain){
+  try{
+    const o=AC.createOscillator(),g=AC.createGain();
+    o.connect(g);g.connect(dest);
+    o.type=type;o.frequency.value=freq;
+    g.gain.setValueAtTime(vol,AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+dur);
+    o.start();o.stop(AC.currentTime+dur);
+  }catch(e){}
+}
+function slide(f1,f2,dur,vol,dest=masterGain){
+  try{
+    const o=AC.createOscillator(),g=AC.createGain();
+    o.connect(g);g.connect(dest);
+    o.type='sine';o.frequency.setValueAtTime(f1,AC.currentTime);
+    o.frequency.exponentialRampToValueAtTime(f2,AC.currentTime+dur);
+    g.gain.setValueAtTime(vol,AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+dur);
+    o.start();o.stop(AC.currentTime+dur);
+  }catch(e){}
+}
+function crunch(dur,vol,freq=1800){
+  try{
+    const buf=AC.createBuffer(1,AC.sampleRate*dur,AC.sampleRate);
+    const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+    const s=AC.createBufferSource(),g=AC.createGain(),f=AC.createBiquadFilter();
+    f.type='bandpass';f.frequency.value=freq;f.Q.value=0.6;
+    s.buffer=buf;s.connect(f);f.connect(g);g.connect(masterGain);
+    g.gain.setValueAtTime(vol,AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+dur);
+    s.start();s.stop(AC.currentTime+dur);
+  }catch(e){}
+}
+function boom(x,y,vol=0.22){
+  // Deep explosion: layered sub-bass thud + crackling burst
+  try{
+    const t=AC.currentTime;
+    // Sub thud
+    const o=AC.createOscillator(),g=AC.createGain();
+    o.connect(g);g.connect(masterGain);
+    o.type='sine';o.frequency.setValueAtTime(120,t);
+    o.frequency.exponentialRampToValueAtTime(30,t+0.35);
+    g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(0.0001,t+0.45);
+    o.start(t);o.stop(t+0.5);
+    // Mid crack
+    const o2=AC.createOscillator(),g2=AC.createGain();
+    o2.connect(g2);g2.connect(masterGain);
+    o2.type='sawtooth';o2.frequency.setValueAtTime(280,t);
+    o2.frequency.exponentialRampToValueAtTime(60,t+0.18);
+    g2.gain.setValueAtTime(vol*.6,t);g2.gain.exponentialRampToValueAtTime(0.0001,t+0.22);
+    o2.start(t);o2.stop(t+0.25);
+    // White noise burst
+    crunch(0.28, vol*0.8, 900);
+    crunch(0.12, vol*0.5, 3200);
+    // Cinematic tail shimmer
+    [0,60,140,240,380].forEach((d,i)=>{
+      setTimeout(()=>{slide(800-i*80,400-i*40,.28+i*.04,vol*.12);},d);
+    });
+  }catch(e){}
+}
+
+const SFX={
+  grab:    ()=>{osc('sine',480,.07,.10);slide(480,640,.09,.05);},
+  drop:    ()=>{slide(360,220,.12,.08);},
+  zoom:    ()=>{slide(260,560,.20,.07);},
+  unzoom:  ()=>{slide(560,260,.16,.06);},
+  fail:    ()=>{osc('square',140,.10,.04);slide(180,100,.20,.03);},
+  molecule:()=>{
+    // Gentle chime for simple molecules (water, CO2 etc)
+    crunch(.08,.06,2200);
+    [0,80,180,300].forEach((d,i)=>{
+      setTimeout(()=>osc('sine',[523,659,784,1047][i],.30,.14),d);
+    });
+  },
+  explode: ()=>boom(),
+  react:   ()=>{SFX.molecule();},
+};
+
+// ── BACKGROUND MUSIC ─────────────────────────────────────────────────────────
+// Generative ambient synth — spacey, indie-science vibe
+let bgmStarted=false;
+function startBGM(){
+  if(bgmStarted)return; bgmStarted=true;
+  const bgGain=AC.createGain(); bgGain.gain.value=0.055; bgGain.connect(AC.destination);
+  // Reverb via convolver
+  const rev=AC.createConvolver();
+  const rBuf=AC.createBuffer(2,AC.sampleRate*2.5,AC.sampleRate);
+  for(let c=0;c<2;c++){const d=rBuf.getChannelData(c);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,2.2);}
+  rev.buffer=rBuf;
+  const revGain=AC.createGain();revGain.gain.value=0.55;
+  bgGain.connect(rev);rev.connect(revGain);revGain.connect(AC.destination);
+
+  // Scale: pentatonic minor — spacey, not too tonal
+  const notes=[196,220,261.6,311.1,349.2,392,440,523.3,622.3,698.5];
+  const chords=[[196,261.6,311.1],[220,293.7,349.2],[174.6,220,261.6],[220,261.6,349.2]];
+  let chordIdx=0;
+
+  function playPad(){
+    if(AC.state!=='running')return;
+    const chord=chords[chordIdx%chords.length]; chordIdx++;
+    chord.forEach(freq=>{
+      const o=AC.createOscillator(),g=AC.createGain();
+      o.connect(g);g.connect(bgGain);
+      o.type='sine';o.frequency.value=freq*(1+rand(-.001,.001));
+      const dur=rand(3.2,5.5);
+      g.gain.setValueAtTime(0,AC.currentTime);
+      g.gain.linearRampToValueAtTime(rand(.3,.55),AC.currentTime+0.8);
+      g.gain.linearRampToValueAtTime(rand(.18,.35),AC.currentTime+dur-0.9);
+      g.gain.linearRampToValueAtTime(0,AC.currentTime+dur);
+      o.start();o.stop(AC.currentTime+dur);
+    });
+    setTimeout(playPad, rand(3800,5400));
+  }
+
+  function playArp(){
+    if(AC.state!=='running')return;
+    const n=notes[Math.random()*notes.length|0]*[1,2][Math.random()*2|0];
+    const o=AC.createOscillator(),g=AC.createGain();
+    o.connect(g);g.connect(bgGain);
+    o.type='triangle';o.frequency.value=n;
+    g.gain.setValueAtTime(0,AC.currentTime);
+    g.gain.linearRampToValueAtTime(rand(.12,.22),AC.currentTime+0.05);
+    g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+rand(.4,.9));
+    o.start();o.stop(AC.currentTime+1);
+    setTimeout(playArp,rand(400,1100));
+  }
+
+  function playDrone(){
+    if(AC.state!=='running')return;
+    const o=AC.createOscillator(),g=AC.createGain();
+    o.connect(g);g.connect(bgGain);
+    o.type='sine';o.frequency.value=rand(48,52);
+    const dur=rand(8,14);
+    g.gain.setValueAtTime(0,AC.currentTime);
+    g.gain.linearRampToValueAtTime(rand(.4,.7),AC.currentTime+1.5);
+    g.gain.linearRampToValueAtTime(0,AC.currentTime+dur);
+    o.start();o.stop(AC.currentTime+dur+.1);
+    setTimeout(playDrone, (dur-2)*1000);
+  }
+
+  playDrone();
+  setTimeout(playPad,800);
+  setTimeout(playArp,2200);
+}
+
+// ── CANVAS ────────────────────────────────────────────────────────────────────
+const C=document.getElementById('c'),X=C.getContext('2d'),VID=document.getElementById('v');
+let W=C.width=innerWidth,H=C.height=innerHeight;
+
+// ── GROUP COLORS & NAMES ──────────────────────────────────────────────────────
+const GC={
+  ak:'#ff4422',ae:'#ffaa00',tm:'#3399cc',pt:'#7799bb',
+  mt:'#00cc77',nm:'#44ccff',hl:'#99ff33',ng:'#ffee22',
+  ln:'#bb77ff',an:'#ff55aa',uk:'#556677',
+};
+const GN={ak:'Alkali',ae:'Alkaline earth',tm:'Transition',pt:'Post-transition',
+  mt:'Metalloid',nm:'Nonmetal',hl:'Halogen',ng:'Noble gas',ln:'Lanthanide',an:'Actinide',uk:'Unknown'};
+
+// ── COMMON ELEMENTS (2-3 copies) ──────────────────────────────────────────────
+const COMMON=new Set(['H','He','Li','C','N','O','F','Ne','Na','Mg','Al','Si','P','S','Cl','Ar',
+  'K','Ca','Fe','Cu','Zn','Ag','Au','Hg','Pb','I','Br','Mn','Cr','Ni']);
+
+// ── ELEMENT DATA (all 118, correct periodic table positions) ──────────────────
+// pos: [period(row 1-9), group(col 1-18)]  rows 8-9 = lanthanides/actinides
+const EL={
+H :{z:1,  n:'Hydrogen',     m:1,   c:GC.nm,g:'nm',pos:[1,1], sh:[1]},
+He:{z:2,  n:'Helium',       m:4,   c:GC.ng,g:'ng',pos:[1,18],sh:[2]},
+Li:{z:3,  n:'Lithium',      m:7,   c:GC.ak,g:'ak',pos:[2,1], sh:[2,1]},
+Be:{z:4,  n:'Beryllium',    m:9,   c:GC.ae,g:'ae',pos:[2,2], sh:[2,2]},
+B :{z:5,  n:'Boron',        m:11,  c:GC.mt,g:'mt',pos:[2,13],sh:[2,3]},
+C :{z:6,  n:'Carbon',       m:12,  c:GC.nm,g:'nm',pos:[2,14],sh:[2,4]},
+N :{z:7,  n:'Nitrogen',     m:14,  c:GC.nm,g:'nm',pos:[2,15],sh:[2,5]},
+O :{z:8,  n:'Oxygen',       m:16,  c:GC.nm,g:'nm',pos:[2,16],sh:[2,6]},
+F :{z:9,  n:'Fluorine',     m:19,  c:GC.hl,g:'hl',pos:[2,17],sh:[2,7]},
+Ne:{z:10, n:'Neon',         m:20,  c:GC.ng,g:'ng',pos:[2,18],sh:[2,8]},
+Na:{z:11, n:'Sodium',       m:23,  c:GC.ak,g:'ak',pos:[3,1], sh:[2,8,1]},
+Mg:{z:12, n:'Magnesium',    m:24,  c:GC.ae,g:'ae',pos:[3,2], sh:[2,8,2]},
+Al:{z:13, n:'Aluminium',    m:27,  c:GC.pt,g:'pt',pos:[3,13],sh:[2,8,3]},
+Si:{z:14, n:'Silicon',      m:28,  c:GC.mt,g:'mt',pos:[3,14],sh:[2,8,4]},
+P :{z:15, n:'Phosphorus',   m:31,  c:GC.nm,g:'nm',pos:[3,15],sh:[2,8,5]},
+S :{z:16, n:'Sulfur',       m:32,  c:GC.nm,g:'nm',pos:[3,16],sh:[2,8,6]},
+Cl:{z:17, n:'Chlorine',     m:35,  c:GC.hl,g:'hl',pos:[3,17],sh:[2,8,7]},
+Ar:{z:18, n:'Argon',        m:40,  c:GC.ng,g:'ng',pos:[3,18],sh:[2,8,8]},
+K :{z:19, n:'Potassium',    m:39,  c:GC.ak,g:'ak',pos:[4,1], sh:[2,8,8,1]},
+Ca:{z:20, n:'Calcium',      m:40,  c:GC.ae,g:'ae',pos:[4,2], sh:[2,8,8,2]},
+Sc:{z:21, n:'Scandium',     m:45,  c:GC.tm,g:'tm',pos:[4,3], sh:[2,8,9,2]},
+Ti:{z:22, n:'Titanium',     m:48,  c:GC.tm,g:'tm',pos:[4,4], sh:[2,8,10,2]},
+V :{z:23, n:'Vanadium',     m:51,  c:GC.tm,g:'tm',pos:[4,5], sh:[2,8,11,2]},
+Cr:{z:24, n:'Chromium',     m:52,  c:GC.tm,g:'tm',pos:[4,6], sh:[2,8,13,1]},
+Mn:{z:25, n:'Manganese',    m:55,  c:GC.tm,g:'tm',pos:[4,7], sh:[2,8,13,2]},
+Fe:{z:26, n:'Iron',         m:56,  c:GC.tm,g:'tm',pos:[4,8], sh:[2,8,14,2]},
+Co:{z:27, n:'Cobalt',       m:59,  c:GC.tm,g:'tm',pos:[4,9], sh:[2,8,15,2]},
+Ni:{z:28, n:'Nickel',       m:58,  c:GC.tm,g:'tm',pos:[4,10],sh:[2,8,16,2]},
+Cu:{z:29, n:'Copper',       m:64,  c:GC.tm,g:'tm',pos:[4,11],sh:[2,8,18,1]},
+Zn:{z:30, n:'Zinc',         m:65,  c:GC.tm,g:'tm',pos:[4,12],sh:[2,8,18,2]},
+Ga:{z:31, n:'Gallium',      m:70,  c:GC.pt,g:'pt',pos:[4,13],sh:[2,8,18,3]},
+Ge:{z:32, n:'Germanium',    m:73,  c:GC.mt,g:'mt',pos:[4,14],sh:[2,8,18,4]},
+As:{z:33, n:'Arsenic',      m:75,  c:GC.mt,g:'mt',pos:[4,15],sh:[2,8,18,5]},
+Se:{z:34, n:'Selenium',     m:79,  c:GC.nm,g:'nm',pos:[4,16],sh:[2,8,18,6]},
+Br:{z:35, n:'Bromine',      m:80,  c:GC.hl,g:'hl',pos:[4,17],sh:[2,8,18,7]},
+Kr:{z:36, n:'Krypton',      m:84,  c:GC.ng,g:'ng',pos:[4,18],sh:[2,8,18,8]},
+Rb:{z:37, n:'Rubidium',     m:85,  c:GC.ak,g:'ak',pos:[5,1], sh:[2,8,18,8,1]},
+Sr:{z:38, n:'Strontium',    m:88,  c:GC.ae,g:'ae',pos:[5,2], sh:[2,8,18,8,2]},
+Y :{z:39, n:'Yttrium',      m:89,  c:GC.tm,g:'tm',pos:[5,3], sh:[2,8,18,9,2]},
+Zr:{z:40, n:'Zirconium',    m:91,  c:GC.tm,g:'tm',pos:[5,4], sh:[2,8,18,10,2]},
+Nb:{z:41, n:'Niobium',      m:93,  c:GC.tm,g:'tm',pos:[5,5], sh:[2,8,18,12,1]},
+Mo:{z:42, n:'Molybdenum',   m:96,  c:GC.tm,g:'tm',pos:[5,6], sh:[2,8,18,13,1]},
+Tc:{z:43, n:'Technetium',   m:98,  c:GC.tm,g:'tm',pos:[5,7], sh:[2,8,18,13,2]},
+Ru:{z:44, n:'Ruthenium',    m:101, c:GC.tm,g:'tm',pos:[5,8], sh:[2,8,18,15,1]},
+Rh:{z:45, n:'Rhodium',      m:103, c:GC.tm,g:'tm',pos:[5,9], sh:[2,8,18,16,1]},
+Pd:{z:46, n:'Palladium',    m:106, c:GC.tm,g:'tm',pos:[5,10],sh:[2,8,18,18]},
+Ag:{z:47, n:'Silver',       m:108, c:GC.tm,g:'tm',pos:[5,11],sh:[2,8,18,18,1]},
+Cd:{z:48, n:'Cadmium',      m:112, c:GC.tm,g:'tm',pos:[5,12],sh:[2,8,18,18,2]},
+In:{z:49, n:'Indium',       m:115, c:GC.pt,g:'pt',pos:[5,13],sh:[2,8,18,18,3]},
+Sn:{z:50, n:'Tin',          m:119, c:GC.pt,g:'pt',pos:[5,14],sh:[2,8,18,18,4]},
+Sb:{z:51, n:'Antimony',     m:122, c:GC.mt,g:'mt',pos:[5,15],sh:[2,8,18,18,5]},
+Te:{z:52, n:'Tellurium',    m:128, c:GC.mt,g:'mt',pos:[5,16],sh:[2,8,18,18,6]},
+I :{z:53, n:'Iodine',       m:127, c:GC.hl,g:'hl',pos:[5,17],sh:[2,8,18,18,7]},
+Xe:{z:54, n:'Xenon',        m:131, c:GC.ng,g:'ng',pos:[5,18],sh:[2,8,18,18,8]},
+Cs:{z:55, n:'Caesium',      m:133, c:GC.ak,g:'ak',pos:[6,1], sh:[2,8,18,18,8,1]},
+Ba:{z:56, n:'Barium',       m:137, c:GC.ae,g:'ae',pos:[6,2], sh:[2,8,18,18,8,2]},
+La:{z:57, n:'Lanthanum',    m:139, c:GC.ln,g:'ln',pos:[8,4], sh:[2,8,18,18,9,2]},
+Ce:{z:58, n:'Cerium',       m:140, c:GC.ln,g:'ln',pos:[8,5], sh:[2,8,18,19,9,2]},
+Pr:{z:59, n:'Praseodymium', m:141, c:GC.ln,g:'ln',pos:[8,6], sh:[2,8,18,21,8,2]},
+Nd:{z:60, n:'Neodymium',    m:144, c:GC.ln,g:'ln',pos:[8,7], sh:[2,8,18,22,8,2]},
+Pm:{z:61, n:'Promethium',   m:145, c:GC.ln,g:'ln',pos:[8,8], sh:[2,8,18,23,8,2]},
+Sm:{z:62, n:'Samarium',     m:150, c:GC.ln,g:'ln',pos:[8,9], sh:[2,8,18,24,8,2]},
+Eu:{z:63, n:'Europium',     m:152, c:GC.ln,g:'ln',pos:[8,10],sh:[2,8,18,25,8,2]},
+Gd:{z:64, n:'Gadolinium',   m:157, c:GC.ln,g:'ln',pos:[8,11],sh:[2,8,18,25,9,2]},
+Tb:{z:65, n:'Terbium',      m:159, c:GC.ln,g:'ln',pos:[8,12],sh:[2,8,18,27,8,2]},
+Dy:{z:66, n:'Dysprosium',   m:163, c:GC.ln,g:'ln',pos:[8,13],sh:[2,8,18,28,8,2]},
+Ho:{z:67, n:'Holmium',      m:165, c:GC.ln,g:'ln',pos:[8,14],sh:[2,8,18,29,8,2]},
+Er:{z:68, n:'Erbium',       m:167, c:GC.ln,g:'ln',pos:[8,15],sh:[2,8,18,30,8,2]},
+Tm:{z:69, n:'Thulium',      m:169, c:GC.ln,g:'ln',pos:[8,16],sh:[2,8,18,31,8,2]},
+Yb:{z:70, n:'Ytterbium',    m:173, c:GC.ln,g:'ln',pos:[8,17],sh:[2,8,18,32,8,2]},
+Lu:{z:71, n:'Lutetium',     m:175, c:GC.ln,g:'ln',pos:[8,18],sh:[2,8,18,32,9,2]},
+Hf:{z:72, n:'Hafnium',      m:178, c:GC.tm,g:'tm',pos:[6,4], sh:[2,8,18,32,10,2]},
+Ta:{z:73, n:'Tantalum',     m:181, c:GC.tm,g:'tm',pos:[6,5], sh:[2,8,18,32,11,2]},
+W :{z:74, n:'Tungsten',     m:184, c:GC.tm,g:'tm',pos:[6,6], sh:[2,8,18,32,12,2]},
+Re:{z:75, n:'Rhenium',      m:186, c:GC.tm,g:'tm',pos:[6,7], sh:[2,8,18,32,13,2]},
+Os:{z:76, n:'Osmium',       m:190, c:GC.tm,g:'tm',pos:[6,8], sh:[2,8,18,32,14,2]},
+Ir:{z:77, n:'Iridium',      m:192, c:GC.tm,g:'tm',pos:[6,9], sh:[2,8,18,32,15,2]},
+Pt:{z:78, n:'Platinum',     m:195, c:GC.tm,g:'tm',pos:[6,10],sh:[2,8,18,32,17,1]},
+Au:{z:79, n:'Gold',         m:197, c:GC.tm,g:'tm',pos:[6,11],sh:[2,8,18,32,18,1]},
+Hg:{z:80, n:'Mercury',      m:201, c:GC.tm,g:'tm',pos:[6,12],sh:[2,8,18,32,18,2]},
+Tl:{z:81, n:'Thallium',     m:204, c:GC.pt,g:'pt',pos:[6,13],sh:[2,8,18,32,18,3]},
+Pb:{z:82, n:'Lead',         m:207, c:GC.pt,g:'pt',pos:[6,14],sh:[2,8,18,32,18,4]},
+Bi:{z:83, n:'Bismuth',      m:209, c:GC.pt,g:'pt',pos:[6,15],sh:[2,8,18,32,18,5]},
+Po:{z:84, n:'Polonium',     m:209, c:GC.mt,g:'mt',pos:[6,16],sh:[2,8,18,32,18,6]},
+At:{z:85, n:'Astatine',     m:210, c:GC.hl,g:'hl',pos:[6,17],sh:[2,8,18,32,18,7]},
+Rn:{z:86, n:'Radon',        m:222, c:GC.ng,g:'ng',pos:[6,18],sh:[2,8,18,32,18,8]},
+Fr:{z:87, n:'Francium',     m:223, c:GC.ak,g:'ak',pos:[7,1], sh:[2,8,18,32,18,8,1]},
+Ra:{z:88, n:'Radium',       m:226, c:GC.ae,g:'ae',pos:[7,2], sh:[2,8,18,32,18,8,2]},
+Ac:{z:89, n:'Actinium',     m:227, c:GC.an,g:'an',pos:[9,4], sh:[2,8,18,32,18,9,2]},
+Th:{z:90, n:'Thorium',      m:232, c:GC.an,g:'an',pos:[9,5], sh:[2,8,18,32,18,10,2]},
+Pa:{z:91, n:'Protactinium', m:231, c:GC.an,g:'an',pos:[9,6], sh:[2,8,18,32,20,9,2]},
+U :{z:92, n:'Uranium',      m:238, c:GC.an,g:'an',pos:[9,7], sh:[2,8,18,32,21,9,2]},
+Np:{z:93, n:'Neptunium',    m:237, c:GC.an,g:'an',pos:[9,8], sh:[2,8,18,32,22,9,2]},
+Pu:{z:94, n:'Plutonium',    m:244, c:GC.an,g:'an',pos:[9,9], sh:[2,8,18,32,24,8,2]},
+Am:{z:95, n:'Americium',    m:243, c:GC.an,g:'an',pos:[9,10],sh:[2,8,18,32,25,8,2]},
+Cm:{z:96, n:'Curium',       m:247, c:GC.an,g:'an',pos:[9,11],sh:[2,8,18,32,25,9,2]},
+Bk:{z:97, n:'Berkelium',    m:247, c:GC.an,g:'an',pos:[9,12],sh:[2,8,18,32,27,8,2]},
+Cf:{z:98, n:'Californium',  m:251, c:GC.an,g:'an',pos:[9,13],sh:[2,8,18,32,28,8,2]},
+Es:{z:99, n:'Einsteinium',  m:252, c:GC.an,g:'an',pos:[9,14],sh:[2,8,18,32,29,8,2]},
+Fm:{z:100,n:'Fermium',      m:257, c:GC.an,g:'an',pos:[9,15],sh:[2,8,18,32,30,8,2]},
+Md:{z:101,n:'Mendelevium',  m:258, c:GC.an,g:'an',pos:[9,16],sh:[2,8,18,32,31,8,2]},
+No:{z:102,n:'Nobelium',     m:259, c:GC.an,g:'an',pos:[9,17],sh:[2,8,18,32,32,8,2]},
+Lr:{z:103,n:'Lawrencium',   m:262, c:GC.an,g:'an',pos:[9,18],sh:[2,8,18,32,32,9,2]},
+Rf:{z:104,n:'Rutherfordium',m:267, c:GC.uk,g:'uk',pos:[7,4], sh:[2,8,18,32,32,10,2]},
+Db:{z:105,n:'Dubnium',      m:270, c:GC.uk,g:'uk',pos:[7,5], sh:[2,8,18,32,32,11,2]},
+Sg:{z:106,n:'Seaborgium',   m:271, c:GC.uk,g:'uk',pos:[7,6], sh:[2,8,18,32,32,12,2]},
+Bh:{z:107,n:'Bohrium',      m:270, c:GC.uk,g:'uk',pos:[7,7], sh:[2,8,18,32,32,13,2]},
+Hs:{z:108,n:'Hassium',      m:277, c:GC.uk,g:'uk',pos:[7,8], sh:[2,8,18,32,32,14,2]},
+Mt:{z:109,n:'Meitnerium',   m:278, c:GC.uk,g:'uk',pos:[7,9], sh:[2,8,18,32,32,15,2]},
+Ds:{z:110,n:'Darmstadtium', m:281, c:GC.uk,g:'uk',pos:[7,10],sh:[2,8,18,32,32,17,1]},
+Rg:{z:111,n:'Roentgenium',  m:282, c:GC.uk,g:'uk',pos:[7,11],sh:[2,8,18,32,32,18,1]},
+Cn:{z:112,n:'Copernicium',  m:285, c:GC.uk,g:'uk',pos:[7,12],sh:[2,8,18,32,32,18,2]},
+Nh:{z:113,n:'Nihonium',     m:286, c:GC.uk,g:'uk',pos:[7,13],sh:[2,8,18,32,32,18,3]},
+Fl:{z:114,n:'Flerovium',    m:289, c:GC.uk,g:'uk',pos:[7,14],sh:[2,8,18,32,32,18,4]},
+Mc:{z:115,n:'Moscovium',    m:290, c:GC.uk,g:'uk',pos:[7,15],sh:[2,8,18,32,32,18,5]},
+Lv:{z:116,n:'Livermorium',  m:293, c:GC.uk,g:'uk',pos:[7,16],sh:[2,8,18,32,32,18,6]},
+Ts:{z:117,n:'Tennessine',   m:294, c:GC.uk,g:'uk',pos:[7,17],sh:[2,8,18,32,32,18,7]},
+Og:{z:118,n:'Oganesson',    m:294, c:GC.uk,g:'uk',pos:[7,18],sh:[2,8,18,32,32,18,8]},
+};
+const SYMS=Object.keys(EL);
+
+// ── GRID GEOMETRY ─────────────────────────────────────────────────────────────
+// 18 cols × 9 rows (rows 8-9 = lanthanides/actinides offset below main table)
+// We reserve right side for legend, so grid width = W - 90
+// Standard table: 18 cols, 7 main rows + 0.8-row gap + 2 lanthanide rows
+const COLS=18;
+const LAN_GAP=0.8; // gap between row 7 and lan/act rows, in cell units
+function gridCell(){
+  const TOTAL=7+LAN_GAP+2; // 9.8 equivalent rows
+  const gw=W-96, gh=H-28;
+  const cw=Math.floor(Math.min(gw/COLS, gh/TOTAL));
+  return Math.max(20, Math.min(cw, 54));
+}
+function gridOrigin(cw){
+  const totalW=COLS*cw, totalH=(7+LAN_GAP+2)*cw;
+  return {ox:Math.floor((W-96-totalW)/2)+4, oy:Math.floor((H-totalH)/2)+8};
+}
+function cellXY(sym){
+  const el=EL[sym], cw=gridCell(), {ox,oy}=gridOrigin(cw);
+  const [period,group]=el.pos;
+  const col=group-1;
+  // periods 1-7: rows 0-6. periods 8-9: below gap
+  const row=period<=7 ? period-1 : 7+LAN_GAP+(period-8);
+  return {x:ox+col*cw+cw/2, y:oy+row*cw+cw/2, cw};
+}
+
+// ── STARS ─────────────────────────────────────────────────────────────────────
+const STARS=Array.from({length:120},()=>({
+  x:Math.random(),y:Math.random(),r:rand(.15,.8),a:rand(.05,.35),tw:rand(.0004,.0018),ph:rand(0,TAU)
+}));
+function drawStars(t){
+  for(const s of STARS){
+    X.fillStyle=`rgba(255,255,255,${s.a*(.45+.55*Math.sin(t*s.tw+s.ph))})`;
+    X.beginPath();X.arc(s.x*W,s.y*H,s.r,0,TAU);X.fill();
+  }
+}
+
+// ── ORB ───────────────────────────────────────────────────────────────────────
+let UID=0;
+class Orb{
+  constructor(sym){
+    this.id=UID++;
+    this.sym=sym; this.el=EL[sym];
+    const {x,y,cw}=cellXY(sym);
+    this.hx=x; this.hy=y;
+    this._spawnX=x; this._spawnY=y;
+    this.x=this.hx; this.y=this.hy;
+    this.cw=cw;
+    this.r=Math.max(10,Math.floor(cw*0.41));
+    this.baseR=this.r; this.targetR=this.r;
+    this.alive=true; this.dying=false; this.dieT=0; this.respawnT=0;
+    this.respawning=false;
+    this.fadeIn=0;
+    this.grabbed=false;
+    this.everDragged=false;
+    this.isReplacement=false;
+    this.atomA=0;
+    this.dfAx=rand(.00012,.00028); this.dfAy=rand(.00014,.0003);
+    this.dfPhx=rand(0,TAU); this.dfPhy=rand(0,TAU);
+    this.dfM=Math.max(1,cw*0.04); // tiny in-cell drift only
+    this.glowPh=rand(0,TAU); this.flickPh=rand(0,TAU);
+    this.tilt=rand(-.5,.5); this.eSpd=rand(.7,1.3);
+    this.zInitD=0; this.zInitR=0;
+  }
+
+  respawn(){
+    this.dying=false; this.dieT=0;
+    this.respawning=true; this.respawnT=0;
+    this.alive=true; this.fadeIn=0;
+    const {x,y}=cellXY(this.sym);
+    this.hx=x; this.hy=y;
+    this._spawnX=x; this._spawnY=y;
+    this.x=this.hx; this.y=this.hy;
+    this.r=this.baseR; this.targetR=this.baseR;
+    this.everDragged=false; this.isReplacement=false;
+  }
+
+  update(dt,t){
+    if(!this.alive){
+      // Countdown to respawn
+      this.respawnT+=dt;
+      if(this.respawnT>50)this.respawn();
+      return;
+    }
+    this.fadeIn=Math.min(1,this.fadeIn+dt*.04);
+    if(this.dying){this.dieT+=dt*.045;if(this.dieT>=1){this.alive=false;this.respawnT=0;}return;}
+    if(!this.grabbed){
+      const tx=this.hx+Math.sin(t*this.dfAx+this.dfPhx)*this.dfM;
+      const ty=this.hy+Math.cos(t*this.dfAy+this.dfPhy)*this.dfM;
+      this.x=lerp(this.x,tx,.06);
+      this.y=lerp(this.y,ty,.06);
+    } else {
+      this.hx=this.x; this.hy=this.y; // anchor drop position
+      if(!this.everDragged&&Math.hypot(this.x-this._spawnX,this.y-this._spawnY)>this.cw*1.5)
+        this.everDragged=true;
+    }
+    this.r=lerp(this.r,this.targetR,.1);
+    this.atomA=lerp(this.atomA,(this.grabbed||this.r>this.baseR*1.4)?1:0,.08);
+  }
+
+  draw(t){
+    if(!this.alive)return;
+    const a=this.fadeIn*(this.dying?Math.max(0,1-this.dieT*2):1);
+    if(a<.01)return;
+    X.save(); X.globalAlpha=a;
+    this._orb(t);
+    if(this.atomA>.03)this._atom(t);
+    X.restore();
+  }
+
+  _orb(t){
+    const cx=this.x,cy=this.y,r=this.r,col=this.el.c;
+    const pulse=.68+.32*Math.sin(t*.003+this.glowPh);
+    const flick=.87+.13*Math.sin(t*.011+this.flickPh);
+
+    // Outer glow
+    const gO=X.createRadialGradient(cx,cy,r*.3,cx,cy,r*2.1);
+    gO.addColorStop(0,rgba(col,.2*pulse)); gO.addColorStop(1,'rgba(0,0,0,0)');
+    X.fillStyle=gO; X.beginPath(); X.arc(cx,cy,r*2.1,0,TAU); X.fill();
+
+    // Core sphere
+    const gC=X.createRadialGradient(cx-r*.26,cy-r*.28,r*.03,cx,cy,r);
+    gC.addColorStop(0,'rgba(255,255,255,.92)');
+    gC.addColorStop(.16,rgba(col,1));
+    gC.addColorStop(.62,rgba(col,.75));
+    gC.addColorStop(1,'rgba(0,0,0,.82)');
+    X.shadowBlur=r*1.35*pulse; X.shadowColor=col;
+    X.fillStyle=gC; X.beginPath(); X.arc(cx,cy,r,0,TAU); X.fill();
+    X.shadowBlur=0;
+
+    // Surface shimmer
+    const sa=.06*flick*Math.abs(Math.sin(t*.007+this.flickPh));
+    if(sa>.005){
+      const sx=cx+Math.cos(t*.005+1.2)*r*.28,sy=cy+Math.sin(t*.006+.8)*r*.28;
+      const gs=X.createRadialGradient(sx,sy,0,sx,sy,r*.6);
+      gs.addColorStop(0,rgba(col,sa)); gs.addColorStop(1,'rgba(0,0,0,0)');
+      X.fillStyle=gs; X.beginPath(); X.arc(sx,sy,r*.6,0,TAU); X.fill();
+    }
+
+    // Symbol — black for readability on neon orbs
+    const fs=Math.max(7,r*.7)|0;
+    X.font=`bold ${fs}px monospace`;
+    X.textAlign='center'; X.textBaseline='middle';
+    X.strokeStyle='rgba(255,255,255,0.22)'; X.lineWidth=2.8;
+    X.strokeText(this.sym,cx,cy-r*.08);
+    X.fillStyle='rgba(0,0,0,.93)';
+    X.fillText(this.sym,cx,cy-r*.08);
+
+    // Atomic number — dark
+    if(r>13){
+      X.font=`${Math.max(5,r*.27)|0}px monospace`;
+      X.fillStyle='rgba(0,0,0,.65)';
+      X.fillText(this.el.z,cx,cy+r*.45);
+    }
+
+    // Grabbed dashed ring
+    if(this.grabbed){
+      X.strokeStyle='rgba(255,255,255,.4)'; X.lineWidth=1.1;
+      X.setLineDash([3,4]);
+      X.beginPath(); X.arc(cx,cy,r+5,0,TAU); X.stroke();
+      X.setLineDash([]);
+    }
+  }
+
+  _atom(t){
+    const cx=this.x,cy=this.y,r=this.r,sh=this.el.sh;
+    const zR=r/this.baseR;
+    const nS=zR>2.5?sh.length:Math.min(sh.length,5);
+    const s0=r*1.1, s1=r*(1.8+nS*.28);
+    X.save(); X.globalAlpha*=this.atomA;
+    for(let s=0;s<nS;s++){
+      const fr=nS===1?.5:s/(nS-1);
+      const sr=s0+fr*(s1-s0);
+      const ec=Math.min(sh[s],8);
+      const ts=.42+.42*Math.abs(Math.cos(this.tilt+s*.4));
+      const sp=this.eSpd*(.0008+.0003*(nS-s));
+      X.save(); X.translate(cx,cy); X.rotate(this.tilt+s*.3);
+      X.save(); X.scale(1,ts);
+      X.strokeStyle='rgba(255,255,255,.05)'; X.lineWidth=.6; X.setLineDash([2,5]);
+      X.beginPath(); X.arc(0,0,sr,0,TAU); X.stroke(); X.setLineDash([]); X.restore();
+      for(let e=0;e<ec;e++){
+        const ang=(e/ec)*TAU+t*sp;
+        const ex=Math.cos(ang)*sr,ey=Math.sin(ang)*sr*ts;
+        const dep=Math.sin(ang),ea=dep<0?.25:.8,esz=dep<0?1.1:2.1;
+        X.shadowColor='#aaddff'; X.shadowBlur=esz*2.5;
+        X.globalAlpha=ea*this.atomA;
+        X.fillStyle='#cce8ff';
+        X.beginPath(); X.arc(ex,ey,esz,0,TAU); X.fill(); X.shadowBlur=0;
+      }
+      X.restore();
+    }
+    if(r>this.baseR*1.15){
+      const fade=clamp((r-this.baseR*1.15)/(this.baseR*.7),0,1);
+      X.globalAlpha=fade*this.atomA*.9;
+      X.fillStyle='#fff';
+      X.font=`bold ${Math.max(10,r*.13)|0}px 'Courier New',monospace`;
+      X.textAlign='center'; X.textBaseline='top';
+      X.shadowBlur=8; X.shadowColor=this.el.c;
+      X.fillText(this.el.n,cx,cy+s1+6);
+      X.shadowBlur=0;
+      if(r>this.baseR*2.8){
+        X.font=`${Math.max(8,r*.08)|0}px monospace`;
+        X.globalAlpha=fade*this.atomA*.55;
+        X.fillText('e⁻ '+this.el.sh.join(' · '),cx,cy+s1+6+Math.max(14,r*.15)+4);
+      }
+    }
+    X.restore();
+  }
+
+  hit(px,py){ return Math.hypot(px-this.x,py-this.y)<this.r*1.55; }
+}
+
+// ── SPAWN ALL ORBS ────────────────────────────────────────────────────────────
+const orbs=[];
+function spawnAll(){
+  orbs.length=0;
+  for(const sym of SYMS) orbs.push(new Orb(sym));
+}
+spawnAll();
+addEventListener('resize',()=>{W=C.width=innerWidth;H=C.height=innerHeight;spawnAll();});
+
+// ── REACTIONS ─────────────────────────────────────────────────────────────────
+const REACTIONS=[
+  {n:{H:2,O:1},  l:'H₂O — Water',             p:10},
+  {n:{H:2,O:2},  l:'H₂O₂ — Hydrogen Peroxide', p:12},
+  {n:{C:1,O:2},  l:'CO₂ — Carbon Dioxide',     p:10},
+  {n:{C:1,O:1},  l:'CO — Carbon Monoxide',      p:8},
+  {n:{Na:1,Cl:1},l:'NaCl — Salt',               p:10},
+  {n:{H:1,Cl:1}, l:'HCl — Hydrochloric Acid',   p:8},
+  {n:{N:1,H:3},  l:'NH₃ — Ammonia',             p:10},
+  {n:{N:1,O:2},  l:'NO₂ — Nitrogen Dioxide',    p:9},
+  {n:{N:2,O:1},  l:'N₂O — Laughing Gas',        p:9},
+  {n:{Fe:1,C:1}, l:'Steel',                     p:8},
+  {n:{Fe:2,O:3}, l:'Fe₂O₃ — Rust',             p:9},
+  {n:{Cu:1,Zn:1},l:'Brass Alloy',               p:7},
+  {n:{Au:1,Cu:1},l:'Rose Gold',                 p:7},
+  {n:{Au:1,Hg:1},l:'Gold Amalgam',              p:7},
+  {n:{Na:1,O:1,H:1},l:'NaOH — Caustic Soda',   p:9},
+  {n:{Si:1,O:2}, l:'SiO₂ — Quartz',            p:8},
+  {n:{Pb:1,S:1}, l:'PbS — Galena',             p:7},
+  {n:{S:1,O:3},  l:'SO₃ — Sulfur Trioxide',    p:8},
+  {n:{H:2},      l:'H₂ — Hydrogen Gas',         p:3},
+  {n:{O:2},      l:'O₂ — Oxygen',               p:3},
+  {n:{N:2},      l:'N₂ — Nitrogen',             p:3},
+  {n:{Cl:2},     l:'Cl₂ — Chlorine Gas',       p:4},
+];
+function findRx(bag){
+  let best=null,bp=-1;
+  for(const r of REACTIONS){
+    let ok=true;
+    for(const[s,n]of Object.entries(r.n))if((bag[s]||0)<n){ok=false;break;}
+    if(!ok)continue;
+    const spec=Object.values(r.n).reduce((a,b)=>a+b,0);
+    const score=r.p*10+spec;
+    if(score>bp){bp=score;best=r;}
+  }
+  return best;
+}
+
+// ── EFFECTS ───────────────────────────────────────────────────────────────────
+const effects=[];
+class Burst{
+  constructor(x,y,col,label,type='molecule'){
+    this.x=x;this.y=y;this.col=col;this.label=label;this.t=0;this.done=false;this.type=type;
+    const cnt=type==='explode'?80:40;
+    const spd=type==='explode'?12:6;
+    this.pts=Array.from({length:cnt},()=>{
+      const a=rand(0,TAU),s=rand(1.5,spd);
+      const cols=type==='explode'
+        ?['#fff','#ffaa00','#ff4400','#ffee00',col]
+        :['#fff','#fff',col];
+      return{x:0,y:0,vx:Math.cos(a)*s,vy:Math.sin(a)*s,
+             sz:rand(type==='explode'?2:1.2,type==='explode'?6:4),
+             col:cols[Math.random()*cols.length|0]};
+    });
+    // Shockwave rings
+    this.rings=type==='explode'?[{r:0,maxR:Math.min(W,H)*.38,a:1},{r:0,maxR:Math.min(W,H)*.22,a:.8}]:[];
+  }
+  update(dt){
+    const spd=this.type==='explode'?.012:.015;
+    this.t+=dt*spd;if(this.t>1){this.done=true;return;}
+    this.pts.forEach(p=>{
+      p.x+=p.vx*dt*.65;p.y+=p.vy*dt*.65;
+      p.vx*=this.type==='explode'?.96:.97;
+      p.vy*=this.type==='explode'?.96:.97;
+    });
+    this.rings.forEach(r=>{r.r+=dt*(this.type==='explode'?8:4);});
+  }
+  draw(){
+    const f=this.t;
+    // Shockwave rings (explosions only)
+    this.rings.forEach(r=>{
+      if(r.r>r.maxR)return;
+      const ra=Math.max(0,(1-r.r/r.maxR)*r.a);
+      X.save();X.strokeStyle=this.col;X.lineWidth=this.type==='explode'?3:2;
+      X.globalAlpha=ra*.6;X.shadowBlur=20;X.shadowColor=this.col;
+      X.beginPath();X.arc(this.x,this.y,r.r,0,TAU);X.stroke();X.restore();
+    });
+    // Flash (explosions)
+    if(this.type==='explode'&&f<.08){
+      X.save();X.globalAlpha=(1-f/.08)*.7;
+      const gr=X.createRadialGradient(this.x,this.y,0,this.x,this.y,Math.min(W,H)*.25);
+      gr.addColorStop(0,'rgba(255,220,100,0.9)');gr.addColorStop(.4,'rgba(255,100,20,0.4)');gr.addColorStop(1,'rgba(0,0,0,0)');
+      X.fillStyle=gr;X.fillRect(0,0,W,H);X.restore();
+    }
+    // Particles
+    X.save();
+    this.pts.forEach(p=>{
+      X.globalAlpha=Math.max(0,1-f)*.85;X.fillStyle=p.col;
+      X.shadowBlur=this.type==='explode'?6:2;X.shadowColor=p.col;
+      X.beginPath();X.arc(this.x+p.x,this.y+p.y,p.sz*(1-f*.4),0,TAU);X.fill();
+    });
+    X.shadowBlur=0;X.restore();
+    // Label
+    if(f>.04&&f<.78){
+      const la=f<.12?f/.12:f>.62?((.78-f)/.16):1;
+      X.save();X.globalAlpha=Math.max(0,la);
+      X.fillStyle=this.type==='explode'?'#ffaa22':'#fff';
+      X.font=`bold ${this.type==='explode'?18:15}px monospace`;
+      X.textAlign='center';X.shadowBlur=14;X.shadowColor=this.col;
+      X.fillText(this.label,this.x,this.y-(this.type==='explode'?100:68)-f*32);X.restore();
+    }
+  }
+}
+
+// ── COLLISION / REACTION ──────────────────────────────────────────────────────
+const discovered=new Set();
+let cooldown=0;
+
+function checkCollisions(){
+  if(cooldown>0)return;
+  const live=orbs.filter(o=>o.alive&&!o.dying);
+  for(let i=0;i<live.length;i++){
+    const a=live[i];
+    if(!a.grabbed||!a.everDragged)continue; // must be intentionally moved
+    for(let j=0;j<live.length;j++){
+      if(i===j)continue;
+      const b=live[j];
+      if(!b.alive||b.dying)continue;
+      // skip fresh replacement sitting at its own spawn point
+      if(b.isReplacement&&Math.hypot(b.x-b._spawnX,b.y-b._spawnY)<b.baseR*1.4)continue;
+      // merge zone: sum of radii + 30% aura
+      if(Math.hypot(a.x-b.x,a.y-b.y)<(a.r+b.r)*1.3){
+        tryReact(a,b); return;
+      }
+    }
+  }
+}
+
+// Radioactive/explosive elements
+const RADIOACTIVE=new Set(['U','Pu','Ra','Th','Po','Rn','Fr','Np','Am','Cm','Bk','Cf','Es','Fm','Md','No','Lr','Ac','Pa']);
+const EXPLOSIVE_RX=new Set(['H₂ — Hydrogen Gas','Fe₂O₃ — Rust']); // reactions that boom
+
+function tryReact(a,b){
+  // Build a bag from the two orbs only
+  const pool=[a,b];
+  const bag={};
+  for(const o of pool) bag[o.sym]=(bag[o.sym]||0)+1;
+
+  // Check if either element is radioactive — always explode
+  const anyRadio=pool.some(o=>RADIOACTIVE.has(o.sym));
+
+  const rx=findRx(bag);
+  if(!rx){
+    if(anyRadio){
+      // Radioactive elements always explode when combined
+      const mx=(a.x+b.x)/2, my=(a.y+b.y)/2;
+      pool.forEach(o=>{o.dying=true;o.dieT=0;o.grabbed=false;});
+      effects.push(new Burst(mx,my,'#ff6600','☢ Nuclear Reaction!','explode'));
+      SFX.explode();
+      showToast('☢ NUCLEAR REACTION — ' + pool.map(o=>o.sym).join('+'));
+      cooldown=90;
+    } else {
+      SFX.fail(); cooldown=20;
+    }
+    return;
+  }
+
+  // We have a valid reaction — check we can satisfy it exactly
+  const need={...rx.n};
+  const used=[];
+  for(const o of pool){if((need[o.sym]||0)>0){need[o.sym]--;used.push(o);}}
+  if(Object.values(need).some(v=>v>0)){SFX.fail();cooldown=20;return;}
+
+  const mx=used.reduce((s,o)=>s+o.x,0)/used.length;
+  const my=used.reduce((s,o)=>s+o.y,0)/used.length;
+  used.forEach(o=>{o.dying=true;o.dieT=0;o.grabbed=false;});
+
+  const isExplosion=anyRadio||EXPLOSIVE_RX.has(rx.l)||rx.l.includes('Acid');
+  const btype=isExplosion?'explode':'molecule';
+  const bcol=isExplosion?'#ff6600':used[0].el.c;
+  effects.push(new Burst(mx,my,bcol,rx.l,btype));
+  if(isExplosion)SFX.explode(); else SFX.molecule();
+
+  if(!discovered.has(rx.l)){discovered.add(rx.l);updateDisc();showToast('⚗  '+rx.l);}
+  cooldown=55;
+}
+
+// ── INPUT: MOUSE ──────────────────────────────────────────────────────────────
+const mouse={x:W/2,y:H/2,active:false,orb:null,ox:0,oy:0};
+
+
+function pickOrb(px,py){
+  for(let i=orbs.length-1;i>=0;i--){
+    const o=orbs[i];
+    if(!o.alive||o.dying||o.grabbed)continue;
+    if(o.hit(px,py))return o;
+  }
+  return null;
+}
+function spawnReplacement(o){
+  if(orbs.some(x=>x!==o&&x.sym===o.sym&&x.alive&&!x.grabbed&&!x.dying))return;
+  const f=new Orb(o.sym); f.fadeIn=0; f.isReplacement=true; orbs.push(f);
+}
+function grabOrb(o,px,py){
+  o.grabbed=true;
+  mouse.orb=o; mouse.ox=o.x-px; mouse.oy=o.y-py;
+  SFX.grab(); spawnReplacement(o);
+}
+function releaseOrb(){
+  if(!mouse.orb)return;
+  mouse.orb.grabbed=false;
+  mouse.orb.targetR=mouse.orb.baseR;
+  SFX.drop();
+  mouse.orb=null;
+}
+
+addEventListener('mousemove',e=>{
+  mouse.x=e.clientX;mouse.y=e.clientY;mouse.active=true;
+  if(mouse.orb){
+    mouse.orb.x=mouse.x+mouse.ox;
+    mouse.orb.y=mouse.y+mouse.oy;
+  }
+});
+addEventListener('mousedown',e=>{
+  if(e.button!==0)return; resumeAC();
+  const o=pickOrb(mouse.x,mouse.y);
+  if(o)grabOrb(o,mouse.x,mouse.y);
+});
+addEventListener('mouseup',()=>releaseOrb());
+addEventListener('contextmenu',e=>e.preventDefault());
+
+// Touch
+const tmap={};
+addEventListener('touchstart',e=>{
+  e.preventDefault();resumeAC();
+  for(const t of e.changedTouches){
+    const o=pickOrb(t.clientX,t.clientY);
+    if(o){
+      o.grabbed=true;
+      tmap[t.identifier]={orb:o,ox:o.x-t.clientX,oy:o.y-t.clientY,zInitD:null,zInitR:o.r};
+      SFX.grab(); spawnReplacement(o);
+    }
+  }
+},{passive:false});
+addEventListener('touchmove',e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    const td=tmap[t.identifier];
+    if(!td?.orb)continue;
+    td.orb.x=t.clientX+td.ox;
+    td.orb.y=t.clientY+td.oy;
+  }
+},{passive:false});
+addEventListener('touchend',e=>{
+  for(const t of e.changedTouches){
+    const td=tmap[t.identifier];
+    if(td?.orb){td.orb.grabbed=false;td.orb.targetR=td.orb.baseR;SFX.drop();}
+    delete tmap[t.identifier];
+  }
+});
+
+addEventListener('keydown',e=>{
+  if(e.key==='r'||e.key==='R')spawnAll();
+  if(e.key==='+'||e.key==='='){orbs.forEach(o=>{o.baseR*=1.1;o.targetR=o.baseR;o.r=o.baseR;});}
+  if(e.key==='-'){orbs.forEach(o=>{o.baseR*=.9;o.targetR=o.baseR;o.r=o.baseR;});}
+  if(e.key==='f'||e.key==='F'){!document.fullscreenElement?document.documentElement.requestFullscreen():document.exitFullscreen();}
+});
+
+// ── HAND TRACKING ─────────────────────────────────────────────────────────────//
+const HCONN=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[0,9],[9,10],[10,11],[11,12],
+             [0,13],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
+// Two-hand zoom: index[0]=grab hand (right), index[1]=zoom hand (left)
+// Left hand open spread (thumb↔pinky distance) controls zoom scale
+class Hand{
+  constructor(label){
+    this.label=label; // 'Left' or 'Right'
+    this.pts=null;this.spx=0;this.spy=0;this.spd=999;
+    this.pinch=false;this.orb=null;this.ox=0;this.oy=0;
+    this.zInitD=0;this.zInitR=0;
+    // Spread tracking (thumb tip=4 to pinky tip=20)
+    this.spread=0;
+  }
+  update(lm,otherHand){
+    this.pts=lm.map(l=>({x:(1-l.x)*W,y:l.y*H}));
+    const tx=this.pts[4].x,ty=this.pts[4].y,ix=this.pts[8].x,iy=this.pts[8].y;
+    const px=(tx+ix)/2,py=(ty+iy)/2,pd=Math.hypot(tx-ix,ty-iy);
+    this.spx=lerp(this.spx,px,.30);this.spy=lerp(this.spy,py,.30);this.spd=lerp(this.spd,pd,.28);
+    // Spread = thumb tip to pinky tip
+    const rawSpread=Math.hypot(this.pts[4].x-this.pts[20].x,this.pts[4].y-this.pts[20].y);
+    this.spread=lerp(this.spread,rawSpread,.25);
+
+    const was=this.pinch;
+    if(!this.pinch&&this.spd<68)this.pinch=true;
+    if(this.pinch&&this.spd>90)this.pinch=false;
+    if(this.pinch&&!was){
+      resumeAC();
+      const o=pickOrb(this.spx,this.spy);
+      if(o){
+        this.orb=o;o.grabbed=true;
+        this.ox=o.x-this.spx;this.oy=o.y-this.spy;
+        this.zInitD=this.spd;this.zInitR=o.r;
+        SFX.grab();spawnReplacement(o);
+      }
+    }
+    if(this.pinch&&this.orb){
+      this.orb.x=this.spx+this.ox;this.orb.y=this.spy+this.oy;
+
+      // ZOOM MODE A: same-hand pinch spread (original — pinch distance changes)
+      // ZOOM MODE B: other hand spread controls zoom (new — right grabs, left scales)
+      const maxR=Math.min(W,H)*0.47;
+      let targetR=this.orb.baseR;
+
+      if(otherHand&&otherHand.pts){
+        // Left hand spread maps to zoom: 60px=1x, 280px=full screen
+        const spreadNorm=clamp((otherHand.spread-60)/220,0,1);
+        targetR=clamp(this.orb.baseR*(1+spreadNorm*((maxR/this.orb.baseR)-1)),this.orb.baseR*.5,maxR);
+      } else if(this.zInitD>8){
+        // Single-hand fallback: pinch spread zooms
+        targetR=clamp(this.zInitR*(this.spd/this.zInitD),this.orb.baseR*.5,maxR);
+      }
+
+      const was2=this.orb.targetR;
+      this.orb.targetR=targetR;
+      if(targetR>this.orb.baseR*1.35&&was2<this.orb.baseR*1.2)SFX.zoom();
+      if(targetR<this.orb.baseR*.75&&was2>this.orb.baseR*.9)SFX.unzoom();
+    }
+    if(!this.pinch&&was&&this.orb){this.orb.grabbed=false;this.orb.targetR=this.orb.baseR;SFX.drop();this.orb=null;}
+  }
+  draw(){
+    if(!this.pts)return;
+    const col=this.pinch?'#ffee00':'#33aaff';
+    X.save();
+    X.globalAlpha=this.pinch?.30:.15;
+    X.strokeStyle=col;X.lineWidth=1.2;
+    HCONN.forEach(([a,b])=>{X.beginPath();X.moveTo(this.pts[a].x,this.pts[a].y);X.lineTo(this.pts[b].x,this.pts[b].y);X.stroke();});
+    this.pts.forEach((p,i)=>{
+      const key=i===4||i===8||i===20;
+      X.globalAlpha=key?.88:.20;
+      X.fillStyle=i===20?'#ff88ff':key?'#fff':col;
+      X.beginPath();X.arc(p.x,p.y,key?5:2,0,TAU);X.fill();
+    });
+    if(this.pinch){
+      X.globalAlpha=.6;X.strokeStyle='#ffee00';X.lineWidth=1.8;
+      X.shadowBlur=14;X.shadowColor='#ffee00';
+      X.beginPath();X.arc(this.spx,this.spy,22,0,TAU);X.stroke();
+      X.shadowBlur=0;
+    }
+    // Show spread indicator on non-grabbing hand
+    if(!this.pinch&&this.pts&&this.spread>60){
+      X.globalAlpha=.35;
+      X.strokeStyle='#ff88ff';X.lineWidth=1.2;X.setLineDash([3,4]);
+      X.beginPath();X.moveTo(this.pts[4].x,this.pts[4].y);X.lineTo(this.pts[20].x,this.pts[20].y);X.stroke();
+      X.setLineDash([]);
+    }
+    X.restore();
+  }
+}
+const hands=[];
+let handBusy=false, tracking=false;
+async function initHands(){
+  const OT=document.getElementById('ot'),OS=document.getElementById('os'),OV=document.getElementById('overlay');
+  // ALWAYS dismiss overlay — nothing blocks the game
+  function dismiss(msg,sub){
+    OT.textContent=msg; OS.textContent=sub||'';
+    setTimeout(()=>{OV.style.opacity='0';setTimeout(()=>{OV.style.display='none';},900);},1200);
+  }
+  // Load MediaPipe scripts with a hard 8s timeout
+  function loadScript(src){
+    return new Promise((res,rej)=>{
+      // If already loaded, resolve immediately
+      if(src.includes('camera_utils')&&typeof CameraUtils!=='undefined'){res();return;}
+      if(src.includes('/hands')&&typeof Hands!=='undefined'){res();return;}
+      const sc=document.createElement('script');
+      sc.src=src; sc.crossOrigin='anonymous';
+      sc.onload=res; sc.onerror=()=>rej(new Error('Failed: '+src));
+      document.head.appendChild(sc);
+      setTimeout(()=>rej(new Error('Timeout: '+src)),8000);
+    });
+  }
+  try{
+    OT.textContent='LOADING TRACKING';OS.textContent='connecting to hand model…';
+    await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js');
+    await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js');
+    OT.textContent='REQUESTING CAMERA';OS.textContent='allow camera access when prompted';
+    let stream;
+    try{
+      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}}});
+    }catch(_){
+      try{stream=await navigator.mediaDevices.getUserMedia({video:true});}
+      catch(e2){throw new Error('Camera denied: '+e2.message);}
+    }
+    VID.srcObject=stream; await VID.play();
+    VID.style.opacity='0.20';
+    OT.textContent='LOADING MODEL';OS.textContent='initialising hand model…';
+    const mpH=new Hands({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+    mpH.setOptions({maxNumHands:2,modelComplexity:1,minDetectionConfidence:.60,minTrackingConfidence:.50,selfieMode:false});
+    mpH.onResults(res=>{
+      const lms=res.multiHandLandmarks||[];
+      const hds=res.multiHandedness||[];
+      while(hands.length<lms.length)hands.push(new Hand('?'));
+      while(hands.length>lms.length){const h=hands.pop();if(h.orb){h.orb.grabbed=false;h.orb.targetR=h.orb.baseR;}}
+      lms.forEach((lm,i)=>{hands[i].label=hds[i]?.label||'?';});
+      // Right hand grabs, left hand zooms
+      const rh=hands.find(h=>h.label==='Right')||hands[0]||null;
+      const lh=hands.find(h=>h.label==='Left')||null;
+      if(rh)rh.update(lms[hands.indexOf(rh)],lh);
+      if(lh&&lh!==rh)lh.update(lms[hands.indexOf(lh)],null);
+    });
+    const cam=new Camera(VID,{
+      onFrame:async()=>{if(!handBusy){handBusy=true;try{await mpH.send({image:VID});}catch(e){}handBusy=false;}},
+      width:640,height:480
+    });
+    cam.start();
+    tracking=true;
+    dismiss('✋ HAND TRACKING ACTIVE','pinch · spread = zoom · two hands = reaction');
+    return;
+  }catch(e){
+    console.warn('[HandTracking]',e.message);
+    dismiss('🖱 MOUSE MODE','hand tracking unavailable — using mouse & touch');
+  }
+}
+initHands();
+
+
+// ── HINT SYSTEM ───────────────────────────────────────────────────────────────
+const HINTS=[
+  '💡 Try: H + H + O = Water',
+  '💡 Try: Na + Cl = Salt',
+  '💡 Try: C + O + O = CO₂',
+  '💡 Try: N + H + H + H = Ammonia',
+  '💡 Try: Fe + C = Steel',
+  '💡 Try: Au + Cu = Rose Gold',
+  '💡 Try: U + Pu = ☢ Nuclear!',
+  '💡 Try: H + Cl = Hydrochloric Acid',
+  '💡 Try: Si + O + O = Quartz',
+  '💡 Try: Fe + Fe + O + O + O = Rust',
+  '💡 Grab an atom and spread fingers to zoom',
+  '💡 Right hand grabs · Left hand spread = zoom level',
+  '💡 Drop atoms anywhere — a fresh one respawns!',
+];
+let hintIdx=Math.random()*HINTS.length|0, hintTmr=null;
+function showHint(){
+  const el=document.getElementById('hint');
+  if(!el)return;
+  el.textContent=HINTS[hintIdx%HINTS.length]; hintIdx++;
+  el.style.opacity='1';
+  clearTimeout(hintTmr);
+  hintTmr=setTimeout(()=>{el.style.opacity='0';setTimeout(showHint,12000);},6000);
+}
+setTimeout(showHint,5000); // first hint after 5s
+
+// ── UI ────────────────────────────────────────────────────────────────────────
+function updateDisc(){
+  const el=document.getElementById('disc');
+  if(!discovered.size){el.textContent='grab elements · bring together to react · pinch to zoom';return;}
+  el.innerHTML='<span style="color:rgba(255,215,0,.38)">discovered: </span>'+[...discovered].join(' · ');
+}
+let toastTmr=null;
+function showToast(msg){
+  const el=document.getElementById('toast');el.textContent=msg;el.style.opacity='1';
+  clearTimeout(toastTmr);toastTmr=setTimeout(()=>el.style.opacity='0',3000);
+}
+function buildLegend(){
+  const el=document.getElementById('legend');
+  el.innerHTML=Object.entries(GN).map(([k,v])=>`<div class="leg"><div class="legdot" style="background:${GC[k]}"></div>${v}</div>`).join('');
+}
+buildLegend();
+
+function drawCursor(){
+  if(!mouse.active||tracking)return;
+  X.save();
+  X.strokeStyle=mouse.orb?'rgba(255,255,120,.45)':'rgba(255,255,255,.16)';
+  X.lineWidth=1.1;X.shadowBlur=mouse.orb?8:3;X.shadowColor=mouse.orb?'#ffff88':'#fff';
+  X.beginPath();X.arc(mouse.x,mouse.y,mouse.orb?13:8,0,TAU);X.stroke();
+  X.fillStyle='rgba(255,255,255,.6)';X.shadowBlur=0;
+  X.beginPath();X.arc(mouse.x,mouse.y,1.4,0,TAU);X.fill();
+  X.restore();
+}
+
+// ── DRAW GRID BACKGROUND CELLS ────────────────────────────────────────────────
+function drawGridBg(){
+  const cw=gridCell(),{ox,oy}=gridOrigin(cw);
+  for(const[sym,el]of Object.entries(EL)){
+    const[period,group]=el.pos;
+    const col=group-1;
+    const row=period<=7 ? period-1 : 7+LAN_GAP+(period-8);
+    const cx=ox+col*cw+cw/2, cy=oy+row*cw+cw/2;
+    const x=cx-cw/2+1, y=cy-cw/2+1, w=cw-2, h=cw-2;
+    // Cell bg
+    X.fillStyle=rgba(el.c,.04);
+    X.strokeStyle=rgba(el.c,.13);
+    X.lineWidth=.5;
+    X.beginPath();X.roundRect(x,y,w,h,2);X.fill();X.stroke();
+    // Period/group label for first col/row
+    if(group===1&&period<=7){
+      X.fillStyle='rgba(255,255,255,.08)';
+      X.font=`${Math.max(5,cw*.18)|0}px monospace`;
+      X.textAlign='left';X.textBaseline='top';
+      X.fillText(period,x+2,y+1);
+    }
+  }
+}
+
+// ── MAIN LOOP ─────────────────────────────────────────────────────────────────
+let lt=0,fc=0,ft=0;
+const HUD=document.getElementById('hud');
+
+function loop(ts){
+  requestAnimationFrame(loop);
+  const dt=Math.min(3,(ts-lt)/16.67);lt=ts;
+  fc++;
+  if(ts-ft>=1000){
+    const live=orbs.filter(o=>o.alive).length;
+    HUD.textContent=`${fc}fps · ${live} active\n${tracking?'✋ hand tracking':'🖱 mouse'} · [R] reset · [F] fullscreen`;
+    fc=0;ft=ts;
+  }
+  if(cooldown>0)cooldown-=dt;
+  checkCollisions();
+  for(const o of orbs)o.update(dt,ts);
+  for(const e of effects)e.update(dt);
+
+  // DRAW
+  X.fillStyle='#000';X.fillRect(0,0,W,H);
+  // Camera feed — mirrored for wall projection
+  if(VID.readyState>=2){
+    X.save();
+    X.translate(W,0);X.scale(-1,1);
+    X.globalAlpha=0.36;
+    X.drawImage(VID,0,0,W,H);
+    X.restore();
+    // Vignette to keep atoms readable
+    const vig=X.createRadialGradient(W/2,H/2,H*0.25,W/2,H/2,H*0.75);
+    vig.addColorStop(0,'rgba(0,0,0,0)');vig.addColorStop(1,'rgba(0,0,0,0.68)');
+    X.fillStyle=vig;X.fillRect(0,0,W,H);
+  }
+  drawStars(ts);
+  drawGridBg();
+  for(const o of orbs)o.draw(ts);
+  for(const e of effects)e.draw();
+  for(const h of hands)h.draw();
+  drawCursor();
+
+  for(let i=effects.length-1;i>=0;i--)if(effects[i].done)effects.splice(i,1);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>// ── BACKGROUND MUSIC ─────────────────────────────────────────────────────
+// Playful wonder-of-science BGM — bright, curious, NOT creepy
+// Upbeat major key: glassy bell arps + bouncy bass + light percussion
+let bgmStarted=false;
+function startBGM(){
+  if(bgmStarted)return; bgmStarted=true;
+  const bgGain=AC.createGain(); bgGain.gain.value=0.052; bgGain.connect(AC.destination);
+
+  // Short, bright reverb (not long cave reverb!)
+  const rev=AC.createConvolver();
+  const rBuf=AC.createBuffer(2,AC.sampleRate*0.6,AC.sampleRate);
+  for(let c=0;c<2;c++){const d=rBuf.getChannelData(c);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,4);}
+  rev.buffer=rBuf;
+  const revG=AC.createGain();revG.gain.value=0.22;
+  bgGain.connect(rev);rev.connect(revG);revG.connect(AC.destination);
+
+  // G major pentatonic — bright, open, scientific wonder
+  const BELLS=[392,494,587,659,784,988,1175,1319];
+  // Bass root movement: G → D → Em → C
+  const BASS_NOTES=[98,73,82,65];
+  // Melody sequence patterns (index into BELLS)
+  const SEQS=[[0,2,3,4,2,3,1,2],[2,3,4,5,4,3,2,3],[4,5,6,5,4,2,3,4],[1,2,3,2,1,0,2,3]];
+  let seqI=0,noteI=0,bassI=0,step=0;
+
+  // Glassy bell tone
+  function bell(freq,dur,vol){
+    const o=AC.createOscillator(),g=AC.createGain();
+    o.type='sine';o.frequency.value=freq;
+    // Bell envelope: fast attack, long decay
+    g.gain.setValueAtTime(0,AC.currentTime);
+    g.gain.linearRampToValueAtTime(vol,AC.currentTime+0.01);
+    g.gain.exponentialRampToValueAtTime(vol*0.4,AC.currentTime+0.08);
+    g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+dur);
+    o.connect(g);g.connect(bgGain);
+    o.start();o.stop(AC.currentTime+dur+0.05);
+    // Second harmonic for bell shimmer
+    const o2=AC.createOscillator(),g2=AC.createGain();
+    o2.type='sine';o2.frequency.value=freq*2.756; // inharmonic partial
+    g2.gain.setValueAtTime(0,AC.currentTime);
+    g2.gain.linearRampToValueAtTime(vol*0.28,AC.currentTime+0.01);
+    g2.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+dur*0.4);
+    o2.connect(g2);g2.connect(bgGain);
+    o2.start();o2.stop(AC.currentTime+dur*0.5);
+  }
+
+  // Bouncy bass
+  function bass(freq,dur,vol){
+    const o=AC.createOscillator(),g=AC.createGain();
+    o.type='triangle';o.frequency.value=freq;
+    g.gain.setValueAtTime(vol,AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+dur*0.7);
+    o.connect(g);g.connect(bgGain);
+    o.start();o.stop(AC.currentTime+dur);
+  }
+
+  // Light hi-hat
+  function hat(){
+    const buf=AC.createBuffer(1,AC.sampleRate*0.03,AC.sampleRate);
+    const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+    const src=AC.createBufferSource(),g=AC.createGain(),f=AC.createBiquadFilter();
+    f.type='highpass';f.frequency.value=7000;
+    src.buffer=buf;src.connect(f);f.connect(g);g.connect(bgGain);
+    g.gain.setValueAtTime(0.18,AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+0.03);
+    src.start();src.stop(AC.currentTime+0.04);
+  }
+
+  // Light kick
+  function kick(){
+    const o=AC.createOscillator(),g=AC.createGain();
+    o.type='sine';
+    o.frequency.setValueAtTime(180,AC.currentTime);
+    o.frequency.exponentialRampToValueAtTime(55,AC.currentTime+0.07);
+    g.gain.setValueAtTime(0.45,AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+0.1);
+    o.connect(g);g.connect(bgGain);
+    o.start();o.stop(AC.currentTime+0.12);
+  }
+
+  const BPM=118; const beat=60/BPM;
+  function tick(){
+    if(!bgmStarted)return;
+    const beatInBar=step%4;
+    const seq=SEQS[seqI%SEQS.length];
+    const freq=BELLS[seq[noteI%seq.length]];
+    noteI++;
+    // Bell melody on every beat, sometimes double
+    bell(freq, beat*1.8, 0.5);
+    if(step%3===1) bell(freq*1.5, beat*1.2, 0.18); // occasional octave shimmer
+    // Bass on 1 & 3
+    if(beatInBar===0){bass(BASS_NOTES[bassI%BASS_NOTES.length]*2,beat*0.9,0.65);kick();}
+    if(beatInBar===2){bass(BASS_NOTES[bassI%BASS_NOTES.length]*2*1.5,beat*0.5,0.4);kick();}
+    if(beatInBar===1||beatInBar===3){
+      // Snare-ish
+      const buf=AC.createBuffer(1,AC.sampleRate*0.06,AC.sampleRate);
+      const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+      const src=AC.createBufferSource(),g=AC.createGain(),f=AC.createBiquadFilter();
+      f.type='bandpass';f.frequency.value=2200;f.Q.value=0.8;
+      src.buffer=buf;src.connect(f);f.connect(g);g.connect(bgGain);
+      g.gain.setValueAtTime(0.22,AC.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+0.06);
+      src.start();src.stop(AC.currentTime+0.07);
+    }
+    hat();
+    // Half-beat hat
+    setTimeout(hat, beat*500*0.5);
+    if(step%8===7){seqI++;bassI++;}
+    step++;
+    setTimeout(tick,beat*1000*0.995);
+  }
+  setTimeout(tick,600);
+}
+
+// ── CANVAS ────────────────────────────────────────────────────────────────────
+const C=document.getElementById('c'),X=C.getContext('2d'),VID=document.getElementById('v');
+let W=C.width=innerWidth,H=C.height=innerHeight;
+
+// ── GROUP COLORS & NAMES ──────────────────────────────────────────────────────
+const GC={
+  ak:'#ff4422',ae:'#ffaa00',tm:'#3399cc',pt:'#7799bb',
+  mt:'#00cc77',nm:'#44ccff',hl:'#99ff33',ng:'#ffee22',
+  ln:'#bb77ff',an:'#ff55aa',uk:'#556677',
+};
+const GN={ak:'Alkali',ae:'Alkaline earth',tm:'Transition',pt:'Post-transition',
+  mt:'Metalloid',nm:'Nonmetal',hl:'Halogen',ng:'Noble gas',ln:'Lanthanide',an:'Actinide',uk:'Unknown'};
+
+// ── COMMON ELEMENTS (2-3 copies) ──────────────────────────────────────────────
+const COMMON=new Set(['H','He','Li','C','N','O','F','Ne','Na','Mg','Al','Si','P','S','Cl','Ar',
+  'K','Ca','Fe','Cu','Zn','Ag','Au','Hg','Pb','I','Br','Mn','Cr','Ni']);
+
+// ── ELEMENT DATA (all 118, correct periodic table positions) ──────────────────
+// pos: [period(row 1-9), group(col 1-18)]  rows 8-9 = lanthanides/actinides
+const EL={
+H :{z:1,  n:'Hydrogen',     m:1,   c:GC.nm,g:'nm',pos:[1,1], sh:[1]},
+He:{z:2,  n:'Helium',       m:4,   c:GC.ng,g:'ng',pos:[1,18],sh:[2]},
+Li:{z:3,  n:'Lithium',      m:7,   c:GC.ak,g:'ak',pos:[2,1], sh:[2,1]},
+Be:{z:4,  n:'Beryllium',    m:9,   c:GC.ae,g:'ae',pos:[2,2], sh:[2,2]},
+B :{z:5,  n:'Boron',        m:11,  c:GC.mt,g:'mt',pos:[2,13],sh:[2,3]},
+C :{z:6,  n:'Carbon',       m:12,  c:GC.nm,g:'nm',pos:[2,14],sh:[2,4]},
+N :{z:7,  n:'Nitrogen',     m:14,  c:GC.nm,g:'nm',pos:[2,15],sh:[2,5]},
+O :{z:8,  n:'Oxygen',       m:16,  c:GC.nm,g:'nm',pos:[2,16],sh:[2,6]},
+F :{z:9,  n:'Fluorine',     m:19,  c:GC.hl,g:'hl',pos:[2,17],sh:[2,7]},
+Ne:{z:10, n:'Neon',         m:20,  c:GC.ng,g:'ng',pos:[2,18],sh:[2,8]},
+Na:{z:11, n:'Sodium',       m:23,  c:GC.ak,g:'ak',pos:[3,1], sh:[2,8,1]},
+Mg:{z:12, n:'Magnesium',    m:24,  c:GC.ae,g:'ae',pos:[3,2], sh:[2,8,2]},
+Al:{z:13, n:'Aluminium',    m:27,  c:GC.pt,g:'pt',pos:[3,13],sh:[2,8,3]},
+Si:{z:14, n:'Silicon',      m:28,  c:GC.mt,g:'mt',pos:[3,14],sh:[2,8,4]},
+P :{z:15, n:'Phosphorus',   m:31,  c:GC.nm,g:'nm',pos:[3,15],sh:[2,8,5]},
+S :{z:16, n:'Sulfur',       m:32,  c:GC.nm,g:'nm',pos:[3,16],sh:[2,8,6]},
+Cl:{z:17, n:'Chlorine',     m:35,  c:GC.hl,g:'hl',pos:[3,17],sh:[2,8,7]},
+Ar:{z:18, n:'Argon',        m:40,  c:GC.ng,g:'ng',pos:[3,18],sh:[2,8,8]},
+K :{z:19, n:'Potassium',    m:39,  c:GC.ak,g:'ak',pos:[4,1], sh:[2,8,8,1]},
+Ca:{z:20, n:'Calcium',      m:40,  c:GC.ae,g:'ae',pos:[4,2], sh:[2,8,8,2]},
+Sc:{z:21, n:'Scandium',     m:45,  c:GC.tm,g:'tm',pos:[4,3], sh:[2,8,9,2]},
+Ti:{z:22, n:'Titanium',     m:48,  c:GC.tm,g:'tm',pos:[4,4], sh:[2,8,10,2]},
+V :{z:23, n:'Vanadium',     m:51,  c:GC.tm,g:'tm',pos:[4,5], sh:[2,8,11,2]},
+Cr:{z:24, n:'Chromium',     m:52,  c:GC.tm,g:'tm',pos:[4,6], sh:[2,8,13,1]},
+Mn:{z:25, n:'Manganese',    m:55,  c:GC.tm,g:'tm',pos:[4,7], sh:[2,8,13,2]},
+Fe:{z:26, n:'Iron',         m:56,  c:GC.tm,g:'tm',pos:[4,8], sh:[2,8,14,2]},
+Co:{z:27, n:'Cobalt',       m:59,  c:GC.tm,g:'tm',pos:[4,9], sh:[2,8,15,2]},
+Ni:{z:28, n:'Nickel',       m:58,  c:GC.tm,g:'tm',pos:[4,10],sh:[2,8,16,2]},
+Cu:{z:29, n:'Copper',       m:64,  c:GC.tm,g:'tm',pos:[4,11],sh:[2,8,18,1]},
+Zn:{z:30, n:'Zinc',         m:65,  c:GC.tm,g:'tm',pos:[4,12],sh:[2,8,18,2]},
+Ga:{z:31, n:'Gallium',      m:70,  c:GC.pt,g:'pt',pos:[4,13],sh:[2,8,18,3]},
+Ge:{z:32, n:'Germanium',    m:73,  c:GC.mt,g:'mt',pos:[4,14],sh:[2,8,18,4]},
+As:{z:33, n:'Arsenic',      m:75,  c:GC.mt,g:'mt',pos:[4,15],sh:[2,8,18,5]},
+Se:{z:34, n:'Selenium',     m:79,  c:GC.nm,g:'nm',pos:[4,16],sh:[2,8,18,6]},
+Br:{z:35, n:'Bromine',      m:80,  c:GC.hl,g:'hl',pos:[4,17],sh:[2,8,18,7]},
+Kr:{z:36, n:'Krypton',      m:84,  c:GC.ng,g:'ng',pos:[4,18],sh:[2,8,18,8]},
+Rb:{z:37, n:'Rubidium',     m:85,  c:GC.ak,g:'ak',pos:[5,1], sh:[2,8,18,8,1]},
+Sr:{z:38, n:'Strontium',    m:88,  c:GC.ae,g:'ae',pos:[5,2], sh:[2,8,18,8,2]},
+Y :{z:39, n:'Yttrium',      m:89,  c:GC.tm,g:'tm',pos:[5,3], sh:[2,8,18,9,2]},
+Zr:{z:40, n:'Zirconium',    m:91,  c:GC.tm,g:'tm',pos:[5,4], sh:[2,8,18,10,2]},
+Nb:{z:41, n:'Niobium',      m:93,  c:GC.tm,g:'tm',pos:[5,5], sh:[2,8,18,12,1]},
+Mo:{z:42, n:'Molybdenum',   m:96,  c:GC.tm,g:'tm',pos:[5,6], sh:[2,8,18,13,1]},
+Tc:{z:43, n:'Technetium',   m:98,  c:GC.tm,g:'tm',pos:[5,7], sh:[2,8,18,13,2]},
+Ru:{z:44, n:'Ruthenium',    m:101, c:GC.tm,g:'tm',pos:[5,8], sh:[2,8,18,15,1]},
+Rh:{z:45, n:'Rhodium',      m:103, c:GC.tm,g:'tm',pos:[5,9], sh:[2,8,18,16,1]},
+Pd:{z:46, n:'Palladium',    m:106, c:GC.tm,g:'tm',pos:[5,10],sh:[2,8,18,18]},
+Ag:{z:47, n:'Silver',       m:108, c:GC.tm,g:'tm',pos:[5,11],sh:[2,8,18,18,1]},
+Cd:{z:48, n:'Cadmium',      m:112, c:GC.tm,g:'tm',pos:[5,12],sh:[2,8,18,18,2]},
+In:{z:49, n:'Indium',       m:115, c:GC.pt,g:'pt',pos:[5,13],sh:[2,8,18,18,3]},
+Sn:{z:50, n:'Tin',          m:119, c:GC.pt,g:'pt',pos:[5,14],sh:[2,8,18,18,4]},
+Sb:{z:51, n:'Antimony',     m:122, c:GC.mt,g:'mt',pos:[5,15],sh:[2,8,18,18,5]},
+Te:{z:52, n:'Tellurium',    m:128, c:GC.mt,g:'mt',pos:[5,16],sh:[2,8,18,18,6]},
+I :{z:53, n:'Iodine',       m:127, c:GC.hl,g:'hl',pos:[5,17],sh:[2,8,18,18,7]},
+Xe:{z:54, n:'Xenon',        m:131, c:GC.ng,g:'ng',pos:[5,18],sh:[2,8,18,18,8]},
+Cs:{z:55, n:'Caesium',      m:133, c:GC.ak,g:'ak',pos:[6,1], sh:[2,8,18,18,8,1]},
+Ba:{z:56, n:'Barium',       m:137, c:GC.ae,g:'ae',pos:[6,2], sh:[2,8,18,18,8,2]},
+La:{z:57, n:'Lanthanum',    m:139, c:GC.ln,g:'ln',pos:[8,4], sh:[2,8,18,18,9,2]},
+Ce:{z:58, n:'Cerium',       m:140, c:GC.ln,g:'ln',pos:[8,5], sh:[2,8,18,19,9,2]},
+Pr:{z:59, n:'Praseodymium', m:141, c:GC.ln,g:'ln',pos:[8,6], sh:[2,8,18,21,8,2]},
+Nd:{z:60, n:'Neodymium',    m:144, c:GC.ln,g:'ln',pos:[8,7], sh:[2,8,18,22,8,2]},
+Pm:{z:61, n:'Promethium',   m:145, c:GC.ln,g:'ln',pos:[8,8], sh:[2,8,18,23,8,2]},
+Sm:{z:62, n:'Samarium',     m:150, c:GC.ln,g:'ln',pos:[8,9], sh:[2,8,18,24,8,2]},
+Eu:{z:63, n:'Europium',     m:152, c:GC.ln,g:'ln',pos:[8,10],sh:[2,8,18,25,8,2]},
+Gd:{z:64, n:'Gadolinium',   m:157, c:GC.ln,g:'ln',pos:[8,11],sh:[2,8,18,25,9,2]},
+Tb:{z:65, n:'Terbium',      m:159, c:GC.ln,g:'ln',pos:[8,12],sh:[2,8,18,27,8,2]},
+Dy:{z:66, n:'Dysprosium',   m:163, c:GC.ln,g:'ln',pos:[8,13],sh:[2,8,18,28,8,2]},
+Ho:{z:67, n:'Holmium',      m:165, c:GC.ln,g:'ln',pos:[8,14],sh:[2,8,18,29,8,2]},
+Er:{z:68, n:'Erbium',       m:167, c:GC.ln,g:'ln',pos:[8,15],sh:[2,8,18,30,8,2]},
+Tm:{z:69, n:'Thulium',      m:169, c:GC.ln,g:'ln',pos:[8,16],sh:[2,8,18,31,8,2]},
+Yb:{z:70, n:'Ytterbium',    m:173, c:GC.ln,g:'ln',pos:[8,17],sh:[2,8,18,32,8,2]},
+Lu:{z:71, n:'Lutetium',     m:175, c:GC.ln,g:'ln',pos:[8,18],sh:[2,8,18,32,9,2]},
+Hf:{z:72, n:'Hafnium',      m:178, c:GC.tm,g:'tm',pos:[6,4], sh:[2,8,18,32,10,2]},
+Ta:{z:73, n:'Tantalum',     m:181, c:GC.tm,g:'tm',pos:[6,5], sh:[2,8,18,32,11,2]},
+W :{z:74, n:'Tungsten',     m:184, c:GC.tm,g:'tm',pos:[6,6], sh:[2,8,18,32,12,2]},
+Re:{z:75, n:'Rhenium',      m:186, c:GC.tm,g:'tm',pos:[6,7], sh:[2,8,18,32,13,2]},
+Os:{z:76, n:'Osmium',       m:190, c:GC.tm,g:'tm',pos:[6,8], sh:[2,8,18,32,14,2]},
+Ir:{z:77, n:'Iridium',      m:192, c:GC.tm,g:'tm',pos:[6,9], sh:[2,8,18,32,15,2]},
+Pt:{z:78, n:'Platinum',     m:195, c:GC.tm,g:'tm',pos:[6,10],sh:[2,8,18,32,17,1]},
+Au:{z:79, n:'Gold',         m:197, c:GC.tm,g:'tm',pos:[6,11],sh:[2,8,18,32,18,1]},
+Hg:{z:80, n:'Mercury',      m:201, c:GC.tm,g:'tm',pos:[6,12],sh:[2,8,18,32,18,2]},
+Tl:{z:81, n:'Thallium',     m:204, c:GC.pt,g:'pt',pos:[6,13],sh:[2,8,18,32,18,3]},
+Pb:{z:82, n:'Lead',         m:207, c:GC.pt,g:'pt',pos:[6,14],sh:[2,8,18,32,18,4]},
+Bi:{z:83, n:'Bismuth',      m:209, c:GC.pt,g:'pt',pos:[6,15],sh:[2,8,18,32,18,5]},
+Po:{z:84, n:'Polonium',     m:209, c:GC.mt,g:'mt',pos:[6,16],sh:[2,8,18,32,18,6]},
+At:{z:85, n:'Astatine',     m:210, c:GC.hl,g:'hl',pos:[6,17],sh:[2,8,18,32,18,7]},
+Rn:{z:86, n:'Radon',        m:222, c:GC.ng,g:'ng',pos:[6,18],sh:[2,8,18,32,18,8]},
+Fr:{z:87, n:'Francium',     m:223, c:GC.ak,g:'ak',pos:[7,1], sh:[2,8,18,32,18,8,1]},
+Ra:{z:88, n:'Radium',       m:226, c:GC.ae,g:'ae',pos:[7,2], sh:[2,8,18,32,18,8,2]},
+Ac:{z:89, n:'Actinium',     m:227, c:GC.an,g:'an',pos:[9,4], sh:[2,8,18,32,18,9,2]},
+Th:{z:90, n:'Thorium',      m:232, c:GC.an,g:'an',pos:[9,5], sh:[2,8,18,32,18,10,2]},
+Pa:{z:91, n:'Protactinium', m:231, c:GC.an,g:'an',pos:[9,6], sh:[2,8,18,32,20,9,2]},
+U :{z:92, n:'Uranium',      m:238, c:GC.an,g:'an',pos:[9,7], sh:[2,8,18,32,21,9,2]},
+Np:{z:93, n:'Neptunium',    m:237, c:GC.an,g:'an',pos:[9,8], sh:[2,8,18,32,22,9,2]},
+Pu:{z:94, n:'Plutonium',    m:244, c:GC.an,g:'an',pos:[9,9], sh:[2,8,18,32,24,8,2]},
+Am:{z:95, n:'Americium',    m:243, c:GC.an,g:'an',pos:[9,10],sh:[2,8,18,32,25,8,2]},
+Cm:{z:96, n:'Curium',       m:247, c:GC.an,g:'an',pos:[9,11],sh:[2,8,18,32,25,9,2]},
+Bk:{z:97, n:'Berkelium',    m:247, c:GC.an,g:'an',pos:[9,12],sh:[2,8,18,32,27,8,2]},
+Cf:{z:98, n:'Californium',  m:251, c:GC.an,g:'an',pos:[9,13],sh:[2,8,18,32,28,8,2]},
+Es:{z:99, n:'Einsteinium',  m:252, c:GC.an,g:'an',pos:[9,14],sh:[2,8,18,32,29,8,2]},
+Fm:{z:100,n:'Fermium',      m:257, c:GC.an,g:'an',pos:[9,15],sh:[2,8,18,32,30,8,2]},
+Md:{z:101,n:'Mendelevium',  m:258, c:GC.an,g:'an',pos:[9,16],sh:[2,8,18,32,31,8,2]},
+No:{z:102,n:'Nobelium',     m:259, c:GC.an,g:'an',pos:[9,17],sh:[2,8,18,32,32,8,2]},
+Lr:{z:103,n:'Lawrencium',   m:262, c:GC.an,g:'an',pos:[9,18],sh:[2,8,18,32,32,9,2]},
+Rf:{z:104,n:'Rutherfordium',m:267, c:GC.uk,g:'uk',pos:[7,4], sh:[2,8,18,32,32,10,2]},
+Db:{z:105,n:'Dubnium',      m:270, c:GC.uk,g:'uk',pos:[7,5], sh:[2,8,18,32,32,11,2]},
+Sg:{z:106,n:'Seaborgium',   m:271, c:GC.uk,g:'uk',pos:[7,6], sh:[2,8,18,32,32,12,2]},
+Bh:{z:107,n:'Bohrium',      m:270, c:GC.uk,g:'uk',pos:[7,7], sh:[2,8,18,32,32,13,2]},
+Hs:{z:108,n:'Hassium',      m:277, c:GC.uk,g:'uk',pos:[7,8], sh:[2,8,18,32,32,14,2]},
+Mt:{z:109,n:'Meitnerium',   m:278, c:GC.uk,g:'uk',pos:[7,9], sh:[2,8,18,32,32,15,2]},
+Ds:{z:110,n:'Darmstadtium', m:281, c:GC.uk,g:'uk',pos:[7,10],sh:[2,8,18,32,32,17,1]},
+Rg:{z:111,n:'Roentgenium',  m:282, c:GC.uk,g:'uk',pos:[7,11],sh:[2,8,18,32,32,18,1]},
+Cn:{z:112,n:'Copernicium',  m:285, c:GC.uk,g:'uk',pos:[7,12],sh:[2,8,18,32,32,18,2]},
+Nh:{z:113,n:'Nihonium',     m:286, c:GC.uk,g:'uk',pos:[7,13],sh:[2,8,18,32,32,18,3]},
+Fl:{z:114,n:'Flerovium',    m:289, c:GC.uk,g:'uk',pos:[7,14],sh:[2,8,18,32,32,18,4]},
+Mc:{z:115,n:'Moscovium',    m:290, c:GC.uk,g:'uk',pos:[7,15],sh:[2,8,18,32,32,18,5]},
+Lv:{z:116,n:'Livermorium',  m:293, c:GC.uk,g:'uk',pos:[7,16],sh:[2,8,18,32,32,18,6]},
+Ts:{z:117,n:'Tennessine',   m:294, c:GC.uk,g:'uk',pos:[7,17],sh:[2,8,18,32,32,18,7]},
+Og:{z:118,n:'Oganesson',    m:294, c:GC.uk,g:'uk',pos:[7,18],sh:[2,8,18,32,32,18,8]},
+};
+const SYMS=Object.keys(EL);
+
+// ── GRID GEOMETRY ─────────────────────────────────────────────────────────────
+// 18 cols × 9 rows (rows 8-9 = lanthanides/actinides offset below main table)
+// We reserve right side for legend, so grid width = W - 90
+// Standard table: 18 cols, 7 main rows + 0.8-row gap + 2 lanthanide rows
+const COLS=18;
+const LAN_GAP=0.8; // gap between row 7 and lan/act rows, in cell units
+function gridCell(){
+  const TOTAL=7+LAN_GAP+2; // 9.8 equivalent rows
+  const gw=W-96, gh=H-28;
+  const cw=Math.floor(Math.min(gw/COLS, gh/TOTAL));
+  return Math.max(20, Math.min(cw, 54));
+}
+function gridOrigin(cw){
+  const totalW=COLS*cw, totalH=(7+LAN_GAP+2)*cw;
+  return {ox:Math.floor((W-96-totalW)/2)+4, oy:Math.floor((H-totalH)/2)+8};
+}
+function cellXY(sym){
+  const el=EL[sym], cw=gridCell(), {ox,oy}=gridOrigin(cw);
+  const [period,group]=el.pos;
+  const col=group-1;
+  // periods 1-7: rows 0-6. periods 8-9: below gap
+  const row=period<=7 ? period-1 : 7+LAN_GAP+(period-8);
+  return {x:ox+col*cw+cw/2, y:oy+row*cw+cw/2, cw};
+}
+
+// ── STARS ─────────────────────────────────────────────────────────────────────
+const STARS=Array.from({length:120},()=>({
+  x:Math.random(),y:Math.random(),r:rand(.15,.8),a:rand(.05,.35),tw:rand(.0004,.0018),ph:rand(0,TAU)
+}));
+function drawStars(t){
+  for(const s of STARS){
+    X.fillStyle=`rgba(255,255,255,${s.a*(.45+.55*Math.sin(t*s.tw+s.ph))})`;
+    X.beginPath();X.arc(s.x*W,s.y*H,s.r,0,TAU);X.fill();
+  }
+}
+
+// ── ORB ───────────────────────────────────────────────────────────────────────
+let UID=0;
+class Orb{
+  constructor(sym){
+    this.id=UID++;
+    this.sym=sym; this.el=EL[sym];
+    const {x,y,cw}=cellXY(sym);
+    this.hx=x; this.hy=y;
+    this._spawnX=x; this._spawnY=y;
+    this.x=this.hx; this.y=this.hy;
+    this.cw=cw;
+    this.r=Math.max(10,Math.floor(cw*0.41));
+    this.baseR=this.r; this.targetR=this.r;
+    this.alive=true; this.dying=false; this.dieT=0; this.respawnT=0;
+    this.respawning=false;
+    this.fadeIn=0;
+    this.grabbed=false;
+    this.everDragged=false;
+    this.isReplacement=false;
+    this.atomA=0;
+    this.dfAx=rand(.00012,.00028); this.dfAy=rand(.00014,.0003);
+    this.dfPhx=rand(0,TAU); this.dfPhy=rand(0,TAU);
+    this.dfM=Math.max(1,cw*0.04); // tiny in-cell drift only
+    this.glowPh=rand(0,TAU); this.flickPh=rand(0,TAU);
+    this.tilt=rand(-.5,.5); this.eSpd=rand(.7,1.3);
+    this.zInitD=0; this.zInitR=0;
+  }
+
+  respawn(){
+    this.dying=false; this.dieT=0;
+    this.respawning=true; this.respawnT=0;
+    this.alive=true; this.fadeIn=0;
+    const {x,y}=cellXY(this.sym);
+    this.hx=x; this.hy=y;
+    this._spawnX=x; this._spawnY=y;
+    this.x=this.hx; this.y=this.hy;
+    this.r=this.baseR; this.targetR=this.baseR;
+    this.everDragged=false; this.isReplacement=false;
+  }
+
+  update(dt,t){
+    if(!this.alive){
+      // Countdown to respawn
+      this.respawnT+=dt;
+      if(this.respawnT>50)this.respawn();
+      return;
+    }
+    this.fadeIn=Math.min(1,this.fadeIn+dt*.04);
+    if(this.dying){this.dieT+=dt*.045;if(this.dieT>=1){this.alive=false;this.respawnT=0;}return;}
+    if(!this.grabbed){
+      const tx=this.hx+Math.sin(t*this.dfAx+this.dfPhx)*this.dfM;
+      const ty=this.hy+Math.cos(t*this.dfAy+this.dfPhy)*this.dfM;
+      this.x=lerp(this.x,tx,.06);
+      this.y=lerp(this.y,ty,.06);
+    } else {
+      this.hx=this.x; this.hy=this.y; // anchor drop position
+      if(!this.everDragged&&Math.hypot(this.x-this._spawnX,this.y-this._spawnY)>this.cw*1.5)
+        this.everDragged=true;
+    }
+    this.r=lerp(this.r,this.targetR,.1);
+    this.atomA=lerp(this.atomA,(this.grabbed||this.r>this.baseR*1.4)?1:0,.08);
+  }
+
+  draw(t){
+    if(!this.alive)return;
+    const a=this.fadeIn*(this.dying?Math.max(0,1-this.dieT*2):1);
+    if(a<.01)return;
+    X.save(); X.globalAlpha=a;
+    this._orb(t);
+    if(this.atomA>.03)this._atom(t);
+    X.restore();
+  }
+
+  _orb(t){
+    const cx=this.x,cy=this.y,r=this.r,col=this.el.c;
+    const pulse=.68+.32*Math.sin(t*.003+this.glowPh);
+    const flick=.87+.13*Math.sin(t*.011+this.flickPh);
+
+    // Outer glow
+    const gO=X.createRadialGradient(cx,cy,r*.3,cx,cy,r*2.1);
+    gO.addColorStop(0,rgba(col,.2*pulse)); gO.addColorStop(1,'rgba(0,0,0,0)');
+    X.fillStyle=gO; X.beginPath(); X.arc(cx,cy,r*2.1,0,TAU); X.fill();
+
+    // Core sphere
+    const gC=X.createRadialGradient(cx-r*.26,cy-r*.28,r*.03,cx,cy,r);
+    gC.addColorStop(0,'rgba(255,255,255,.92)');
+    gC.addColorStop(.16,rgba(col,1));
+    gC.addColorStop(.62,rgba(col,.75));
+    gC.addColorStop(1,'rgba(0,0,0,.82)');
+    X.shadowBlur=r*1.35*pulse; X.shadowColor=col;
+    X.fillStyle=gC; X.beginPath(); X.arc(cx,cy,r,0,TAU); X.fill();
+    X.shadowBlur=0;
+
+    // Surface shimmer
+    const sa=.06*flick*Math.abs(Math.sin(t*.007+this.flickPh));
+    if(sa>.005){
+      const sx=cx+Math.cos(t*.005+1.2)*r*.28,sy=cy+Math.sin(t*.006+.8)*r*.28;
+      const gs=X.createRadialGradient(sx,sy,0,sx,sy,r*.6);
+      gs.addColorStop(0,rgba(col,sa)); gs.addColorStop(1,'rgba(0,0,0,0)');
+      X.fillStyle=gs; X.beginPath(); X.arc(sx,sy,r*.6,0,TAU); X.fill();
+    }
+
+    // Symbol — black for readability on neon orbs
+    const fs=Math.max(7,r*.7)|0;
+    X.font=`bold ${fs}px monospace`;
+    X.textAlign='center'; X.textBaseline='middle';
+    X.strokeStyle='rgba(255,255,255,0.22)'; X.lineWidth=2.8;
+    X.strokeText(this.sym,cx,cy-r*.08);
+    X.fillStyle='rgba(0,0,0,.93)';
+    X.fillText(this.sym,cx,cy-r*.08);
+
+    // Atomic number — dark
+    if(r>13){
+      X.font=`${Math.max(5,r*.27)|0}px monospace`;
+      X.fillStyle='rgba(0,0,0,.65)';
+      X.fillText(this.el.z,cx,cy+r*.45);
+    }
+
+    // Grabbed dashed ring
+    if(this.grabbed){
+      X.strokeStyle='rgba(255,255,255,.4)'; X.lineWidth=1.1;
+      X.setLineDash([3,4]);
+      X.beginPath(); X.arc(cx,cy,r+5,0,TAU); X.stroke();
+      X.setLineDash([]);
+    }
+  }
+
+  _atom(t){
+    const cx=this.x,cy=this.y,r=this.r,sh=this.el.sh;
+    const zR=r/this.baseR;
+    const nS=zR>2.5?sh.length:Math.min(sh.length,5);
+    const s0=r*1.1, s1=r*(1.8+nS*.28);
+    X.save(); X.globalAlpha*=this.atomA;
+    for(let s=0;s<nS;s++){
+      const fr=nS===1?.5:s/(nS-1);
+      const sr=s0+fr*(s1-s0);
+      const ec=Math.min(sh[s],8);
+      const ts=.42+.42*Math.abs(Math.cos(this.tilt+s*.4));
+      const sp=this.eSpd*(.0008+.0003*(nS-s));
+      X.save(); X.translate(cx,cy); X.rotate(this.tilt+s*.3);
+      X.save(); X.scale(1,ts);
+      X.strokeStyle='rgba(255,255,255,.05)'; X.lineWidth=.6; X.setLineDash([2,5]);
+      X.beginPath(); X.arc(0,0,sr,0,TAU); X.stroke(); X.setLineDash([]); X.restore();
+      for(let e=0;e<ec;e++){
+        const ang=(e/ec)*TAU+t*sp;
+        const ex=Math.cos(ang)*sr,ey=Math.sin(ang)*sr*ts;
+        const dep=Math.sin(ang),ea=dep<0?.25:.8,esz=dep<0?1.1:2.1;
+        X.shadowColor='#aaddff'; X.shadowBlur=esz*2.5;
+        X.globalAlpha=ea*this.atomA;
+        X.fillStyle='#cce8ff';
+        X.beginPath(); X.arc(ex,ey,esz,0,TAU); X.fill(); X.shadowBlur=0;
+      }
+      X.restore();
+    }
+    if(r>this.baseR*1.15){
+      const fade=clamp((r-this.baseR*1.15)/(this.baseR*.7),0,1);
+      X.globalAlpha=fade*this.atomA*.9;
+      X.fillStyle='#fff';
+      X.font=`bold ${Math.max(10,r*.13)|0}px 'Courier New',monospace`;
+      X.textAlign='center'; X.textBaseline='top';
+      X.shadowBlur=8; X.shadowColor=this.el.c;
+      X.fillText(this.el.n,cx,cy+s1+6);
+      X.shadowBlur=0;
+      if(r>this.baseR*2.8){
+        X.font=`${Math.max(8,r*.08)|0}px monospace`;
+        X.globalAlpha=fade*this.atomA*.55;
+        X.fillText('e⁻ '+this.el.sh.join(' · '),cx,cy+s1+6+Math.max(14,r*.15)+4);
+      }
+    }
+    X.restore();
+  }
+
+  hit(px,py){ return Math.hypot(px-this.x,py-this.y)<this.r*1.55; }
+}
+
+// ── SPAWN ALL ORBS ────────────────────────────────────────────────────────────
+const orbs=[];
+function spawnAll(){
+  orbs.length=0;
+  for(const sym of SYMS) orbs.push(new Orb(sym));
+}
+spawnAll();
+addEventListener('resize',()=>{W=C.width=innerWidth;H=C.height=innerHeight;spawnAll();});
+
+// ── REACTIONS ─────────────────────────────────────────────────────────────────
+const REACTIONS=[
+  {n:{H:2,O:1},  l:'H₂O — Water',             p:10},
+  {n:{H:2,O:2},  l:'H₂O₂ — Hydrogen Peroxide', p:12},
+  {n:{C:1,O:2},  l:'CO₂ — Carbon Dioxide',     p:10},
+  {n:{C:1,O:1},  l:'CO — Carbon Monoxide',      p:8},
+  {n:{Na:1,Cl:1},l:'NaCl — Salt',               p:10},
+  {n:{H:1,Cl:1}, l:'HCl — Hydrochloric Acid',   p:8},
+  {n:{N:1,H:3},  l:'NH₃ — Ammonia',             p:10},
+  {n:{N:1,O:2},  l:'NO₂ — Nitrogen Dioxide',    p:9},
+  {n:{N:2,O:1},  l:'N₂O — Laughing Gas',        p:9},
+  {n:{Fe:1,C:1}, l:'Steel',                     p:8},
+  {n:{Fe:2,O:3}, l:'Fe₂O₃ — Rust',             p:9},
+  {n:{Cu:1,Zn:1},l:'Brass Alloy',               p:7},
+  {n:{Au:1,Cu:1},l:'Rose Gold',                 p:7},
+  {n:{Au:1,Hg:1},l:'Gold Amalgam',              p:7},
+  {n:{Na:1,O:1,H:1},l:'NaOH — Caustic Soda',   p:9},
+  {n:{Si:1,O:2}, l:'SiO₂ — Quartz',            p:8},
+  {n:{Pb:1,S:1}, l:'PbS — Galena',             p:7},
+  {n:{S:1,O:3},  l:'SO₃ — Sulfur Trioxide',    p:8},
+  {n:{H:2},      l:'H₂ — Hydrogen Gas',         p:3},
+  {n:{O:2},      l:'O₂ — Oxygen',               p:3},
+  {n:{N:2},      l:'N₂ — Nitrogen',             p:3},
+  {n:{Cl:2},     l:'Cl₂ — Chlorine Gas',       p:4},
+];
+function findRx(bag){
+  let best=null,bp=-1;
+  for(const r of REACTIONS){
+    let ok=true;
+    for(const[s,n]of Object.entries(r.n))if((bag[s]||0)<n){ok=false;break;}
+    if(!ok)continue;
+    const spec=Object.values(r.n).reduce((a,b)=>a+b,0);
+    const score=r.p*10+spec;
+    if(score>bp){bp=score;best=r;}
+  }
+  return best;
+}
+
+// ── EFFECTS ───────────────────────────────────────────────────────────────────
+const effects=[];
+class Burst{
+  constructor(x,y,col,label,type='molecule'){
+    this.x=x;this.y=y;this.col=col;this.label=label;this.t=0;this.done=false;this.type=type;
+    const cnt=type==='explode'?80:40;
+    const spd=type==='explode'?12:6;
+    this.pts=Array.from({length:cnt},()=>{
+      const a=rand(0,TAU),s=rand(1.5,spd);
+      const cols=type==='explode'
+        ?['#fff','#ffaa00','#ff4400','#ffee00',col]
+        :['#fff','#fff',col];
+      return{x:0,y:0,vx:Math.cos(a)*s,vy:Math.sin(a)*s,
+             sz:rand(type==='explode'?2:1.2,type==='explode'?6:4),
+             col:cols[Math.random()*cols.length|0]};
+    });
+    // Shockwave rings
+    this.rings=type==='explode'?[{r:0,maxR:Math.min(W,H)*.38,a:1},{r:0,maxR:Math.min(W,H)*.22,a:.8}]:[];
+  }
+  update(dt){
+    const spd=this.type==='explode'?.012:.015;
+    this.t+=dt*spd;if(this.t>1){this.done=true;return;}
+    this.pts.forEach(p=>{
+      p.x+=p.vx*dt*.65;p.y+=p.vy*dt*.65;
+      p.vx*=this.type==='explode'?.96:.97;
+      p.vy*=this.type==='explode'?.96:.97;
+    });
+    this.rings.forEach(r=>{r.r+=dt*(this.type==='explode'?8:4);});
+  }
+  draw(){
+    const f=this.t;
+    // Shockwave rings (explosions only)
+    this.rings.forEach(r=>{
+      if(r.r>r.maxR)return;
+      const ra=Math.max(0,(1-r.r/r.maxR)*r.a);
+      X.save();X.strokeStyle=this.col;X.lineWidth=this.type==='explode'?3:2;
+      X.globalAlpha=ra*.6;X.shadowBlur=20;X.shadowColor=this.col;
+      X.beginPath();X.arc(this.x,this.y,r.r,0,TAU);X.stroke();X.restore();
+    });
+    // Flash (explosions)
+    if(this.type==='explode'&&f<.08){
+      X.save();X.globalAlpha=(1-f/.08)*.7;
+      const gr=X.createRadialGradient(this.x,this.y,0,this.x,this.y,Math.min(W,H)*.25);
+      gr.addColorStop(0,'rgba(255,220,100,0.9)');gr.addColorStop(.4,'rgba(255,100,20,0.4)');gr.addColorStop(1,'rgba(0,0,0,0)');
+      X.fillStyle=gr;X.fillRect(0,0,W,H);X.restore();
+    }
+    // Particles
+    X.save();
+    this.pts.forEach(p=>{
+      X.globalAlpha=Math.max(0,1-f)*.85;X.fillStyle=p.col;
+      X.shadowBlur=this.type==='explode'?6:2;X.shadowColor=p.col;
+      X.beginPath();X.arc(this.x+p.x,this.y+p.y,p.sz*(1-f*.4),0,TAU);X.fill();
+    });
+    X.shadowBlur=0;X.restore();
+    // Label
+    if(f>.04&&f<.78){
+      const la=f<.12?f/.12:f>.62?((.78-f)/.16):1;
+      X.save();X.globalAlpha=Math.max(0,la);
+      X.fillStyle=this.type==='explode'?'#ffaa22':'#fff';
+      X.font=`bold ${this.type==='explode'?18:15}px monospace`;
+      X.textAlign='center';X.shadowBlur=14;X.shadowColor=this.col;
+      X.fillText(this.label,this.x,this.y-(this.type==='explode'?100:68)-f*32);X.restore();
+    }
+  }
+}
+
+// ── COLLISION / REACTION ──────────────────────────────────────────────────────
+const discovered=new Set();
+let cooldown=0;
+
+function checkCollisions(){
+  if(cooldown>0)return;
+  const live=orbs.filter(o=>o.alive&&!o.dying);
+  for(let i=0;i<live.length;i++){
+    const a=live[i];
+    if(!a.grabbed||!a.everDragged)continue; // must be intentionally moved
+    for(let j=0;j<live.length;j++){
+      if(i===j)continue;
+      const b=live[j];
+      if(!b.alive||b.dying)continue;
+      // skip fresh replacement sitting at its own spawn point
+      if(b.isReplacement&&Math.hypot(b.x-b._spawnX,b.y-b._spawnY)<b.baseR*1.4)continue;
+      // merge zone: sum of radii + 30% aura
+      if(Math.hypot(a.x-b.x,a.y-b.y)<(a.r+b.r)*1.3){
+        tryReact(a,b); return;
+      }
+    }
+  }
+}
+
+// Radioactive/explosive elements
+const RADIOACTIVE=new Set(['U','Pu','Ra','Th','Po','Rn','Fr','Np','Am','Cm','Bk','Cf','Es','Fm','Md','No','Lr','Ac','Pa']);
+const EXPLOSIVE_RX=new Set(['H₂ — Hydrogen Gas','Fe₂O₃ — Rust']); // reactions that boom
+
+function tryReact(a,b){
+  // Build a bag from the two orbs only
+  const pool=[a,b];
+  const bag={};
+  for(const o of pool) bag[o.sym]=(bag[o.sym]||0)+1;
+
+  // Check if either element is radioactive — always explode
+  const anyRadio=pool.some(o=>RADIOACTIVE.has(o.sym));
+
+  const rx=findRx(bag);
+  if(!rx){
+    if(anyRadio){
+      // Radioactive elements always explode when combined
+      const mx=(a.x+b.x)/2, my=(a.y+b.y)/2;
+      pool.forEach(o=>{o.dying=true;o.dieT=0;o.grabbed=false;});
+      effects.push(new Burst(mx,my,'#ff6600','☢ Nuclear Reaction!','explode'));
+      SFX.explode();
+      showToast('☢ NUCLEAR REACTION — ' + pool.map(o=>o.sym).join('+'));
+      cooldown=90;
+    } else {
+      SFX.fail(); cooldown=20;
+    }
+    return;
+  }
+
+  // We have a valid reaction — check we can satisfy it exactly
+  const need={...rx.n};
+  const used=[];
+  for(const o of pool){if((need[o.sym]||0)>0){need[o.sym]--;used.push(o);}}
+  if(Object.values(need).some(v=>v>0)){SFX.fail();cooldown=20;return;}
+
+  const mx=used.reduce((s,o)=>s+o.x,0)/used.length;
+  const my=used.reduce((s,o)=>s+o.y,0)/used.length;
+  used.forEach(o=>{o.dying=true;o.dieT=0;o.grabbed=false;});
+
+  const isExplosion=anyRadio||EXPLOSIVE_RX.has(rx.l)||rx.l.includes('Acid');
+  const btype=isExplosion?'explode':'molecule';
+  const bcol=isExplosion?'#ff6600':used[0].el.c;
+  effects.push(new Burst(mx,my,bcol,rx.l,btype));
+  if(isExplosion)SFX.explode(); else SFX.molecule();
+
+  if(!discovered.has(rx.l)){discovered.add(rx.l);updateDisc();showToast('⚗  '+rx.l);}
+  cooldown=55;
+}
+
+// ── INPUT: MOUSE ──────────────────────────────────────────────────────────────
+const mouse={x:W/2,y:H/2,active:false,orb:null,ox:0,oy:0};
+
+
+function pickOrb(px,py){
+  for(let i=orbs.length-1;i>=0;i--){
+    const o=orbs[i];
+    if(!o.alive||o.dying||o.grabbed)continue;
+    if(o.hit(px,py))return o;
+  }
+  return null;
+}
+function spawnReplacement(o){
+  if(orbs.some(x=>x!==o&&x.sym===o.sym&&x.alive&&!x.grabbed&&!x.dying))return;
+  const f=new Orb(o.sym); f.fadeIn=0; f.isReplacement=true; orbs.push(f);
+}
+function grabOrb(o,px,py){
+  o.grabbed=true;
+  mouse.orb=o; mouse.ox=o.x-px; mouse.oy=o.y-py;
+  SFX.grab(); spawnReplacement(o);
+}
+function releaseOrb(){
+  if(!mouse.orb)return;
+  mouse.orb.grabbed=false;
+  mouse.orb.targetR=mouse.orb.baseR;
+  SFX.drop();
+  mouse.orb=null;
+}
+
+addEventListener('mousemove',e=>{
+  mouse.x=e.clientX;mouse.y=e.clientY;mouse.active=true;
+  if(mouse.orb){
+    mouse.orb.x=mouse.x+mouse.ox;
+    mouse.orb.y=mouse.y+mouse.oy;
+  }
+});
+addEventListener('mousedown',e=>{
+  if(e.button!==0)return; resumeAC();
+  const o=pickOrb(mouse.x,mouse.y);
+  if(o)grabOrb(o,mouse.x,mouse.y);
+});
+addEventListener('mouseup',()=>releaseOrb());
+addEventListener('contextmenu',e=>e.preventDefault());
+
+// Touch
+const tmap={};
+addEventListener('touchstart',e=>{
+  e.preventDefault();resumeAC();
+  for(const t of e.changedTouches){
+    const o=pickOrb(t.clientX,t.clientY);
+    if(o){
+      o.grabbed=true;
+      tmap[t.identifier]={orb:o,ox:o.x-t.clientX,oy:o.y-t.clientY,zInitD:null,zInitR:o.r};
+      SFX.grab(); spawnReplacement(o);
+    }
+  }
+},{passive:false});
+addEventListener('touchmove',e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    const td=tmap[t.identifier];
+    if(!td?.orb)continue;
+    td.orb.x=t.clientX+td.ox;
+    td.orb.y=t.clientY+td.oy;
+  }
+},{passive:false});
+addEventListener('touchend',e=>{
+  for(const t of e.changedTouches){
+    const td=tmap[t.identifier];
+    if(td?.orb){td.orb.grabbed=false;td.orb.targetR=td.orb.baseR;SFX.drop();}
+    delete tmap[t.identifier];
+  }
+});
+
+addEventListener('keydown',e=>{
+  if(e.key==='r'||e.key==='R')spawnAll();
+  if(e.key==='+'||e.key==='='){orbs.forEach(o=>{o.baseR*=1.1;o.targetR=o.baseR;o.r=o.baseR;});}
+  if(e.key==='-'){orbs.forEach(o=>{o.baseR*=.9;o.targetR=o.baseR;o.r=o.baseR;});}
+  if(e.key==='f'||e.key==='F'){!document.fullscreenElement?document.documentElement.requestFullscreen():document.exitFullscreen();}
+});
+
+// ── HAND TRACKING ─────────────────────────────────────────────────────────────//
+const HCONN=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[0,9],[9,10],[10,11],[11,12],
+             [0,13],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
+// Two-hand zoom: index[0]=grab hand (right), index[1]=zoom hand (left)
+// Left hand open spread (thumb↔pinky distance) controls zoom scale
+class Hand{
+  constructor(label){
+    this.label=label; // 'Left' or 'Right'
+    this.pts=null;this.spx=0;this.spy=0;this.spd=999;
+    this.pinch=false;this.orb=null;this.ox=0;this.oy=0;
+    this.zInitD=0;this.zInitR=0;
+    // Spread tracking (thumb tip=4 to pinky tip=20)
+    this.spread=0;
+  }
+  update(lm,otherHand){
+    this.pts=lm.map(l=>({x:(1-l.x)*W,y:l.y*H}));
+    const tx=this.pts[4].x,ty=this.pts[4].y,ix=this.pts[8].x,iy=this.pts[8].y;
+    const px=(tx+ix)/2,py=(ty+iy)/2,pd=Math.hypot(tx-ix,ty-iy);
+    this.spx=lerp(this.spx,px,.30);this.spy=lerp(this.spy,py,.30);this.spd=lerp(this.spd,pd,.28);
+    // Spread = thumb tip to pinky tip
+    const rawSpread=Math.hypot(this.pts[4].x-this.pts[20].x,this.pts[4].y-this.pts[20].y);
+    this.spread=lerp(this.spread,rawSpread,.25);
+
+    const was=this.pinch;
+    if(!this.pinch&&this.spd<68)this.pinch=true;
+    if(this.pinch&&this.spd>90)this.pinch=false;
+    if(this.pinch&&!was){
+      resumeAC();
+      const o=pickOrb(this.spx,this.spy);
+      if(o){
+        this.orb=o;o.grabbed=true;
+        this.ox=o.x-this.spx;this.oy=o.y-this.spy;
+        this.zInitD=this.spd;this.zInitR=o.r;
+        SFX.grab();spawnReplacement(o);
+      }
+    }
+    if(this.pinch&&this.orb){
+      this.orb.x=this.spx+this.ox;this.orb.y=this.spy+this.oy;
+
+      // ZOOM MODE A: same-hand pinch spread (original — pinch distance changes)
+      // ZOOM MODE B: other hand spread controls zoom (new — right grabs, left scales)
+      const maxR=Math.min(W,H)*0.47;
+      let targetR=this.orb.baseR;
+
+      if(otherHand&&otherHand.pts){
+        // Left hand spread maps to zoom: 60px=1x, 280px=full screen
+        const spreadNorm=clamp((otherHand.spread-60)/220,0,1);
+        targetR=clamp(this.orb.baseR*(1+spreadNorm*((maxR/this.orb.baseR)-1)),this.orb.baseR*.5,maxR);
+      } else if(this.zInitD>8){
+        // Single-hand fallback: pinch spread zooms
+        targetR=clamp(this.zInitR*(this.spd/this.zInitD),this.orb.baseR*.5,maxR);
+      }
+
+      const was2=this.orb.targetR;
+      this.orb.targetR=targetR;
+      if(targetR>this.orb.baseR*1.35&&was2<this.orb.baseR*1.2)SFX.zoom();
+      if(targetR<this.orb.baseR*.75&&was2>this.orb.baseR*.9)SFX.unzoom();
+    }
+    if(!this.pinch&&was&&this.orb){this.orb.grabbed=false;this.orb.targetR=this.orb.baseR;SFX.drop();this.orb=null;}
+  }
+  draw(){
+    if(!this.pts)return;
+    const col=this.pinch?'#ffee00':'#33aaff';
+    X.save();
+    X.globalAlpha=this.pinch?.30:.15;
+    X.strokeStyle=col;X.lineWidth=1.2;
+    HCONN.forEach(([a,b])=>{X.beginPath();X.moveTo(this.pts[a].x,this.pts[a].y);X.lineTo(this.pts[b].x,this.pts[b].y);X.stroke();});
+    this.pts.forEach((p,i)=>{
+      const key=i===4||i===8||i===20;
+      X.globalAlpha=key?.88:.20;
+      X.fillStyle=i===20?'#ff88ff':key?'#fff':col;
+      X.beginPath();X.arc(p.x,p.y,key?5:2,0,TAU);X.fill();
+    });
+    if(this.pinch){
+      X.globalAlpha=.6;X.strokeStyle='#ffee00';X.lineWidth=1.8;
+      X.shadowBlur=14;X.shadowColor='#ffee00';
+      X.beginPath();X.arc(this.spx,this.spy,22,0,TAU);X.stroke();
+      X.shadowBlur=0;
+    }
+    // Show spread indicator on non-grabbing hand
+    if(!this.pinch&&this.pts&&this.spread>60){
+      X.globalAlpha=.35;
+      X.strokeStyle='#ff88ff';X.lineWidth=1.2;X.setLineDash([3,4]);
+      X.beginPath();X.moveTo(this.pts[4].x,this.pts[4].y);X.lineTo(this.pts[20].x,this.pts[20].y);X.stroke();
+      X.setLineDash([]);
+    }
+    X.restore();
+  }
+}
+const hands=[];
+let handBusy=false, tracking=false;
+async function initHands(){
+  const OT=document.getElementById('ot'),OS=document.getElementById('os'),OV=document.getElementById('overlay');
+  // ALWAYS dismiss overlay — nothing blocks the game
+  function dismiss(msg,sub){
+    OT.textContent=msg; OS.textContent=sub||'';
+    setTimeout(()=>{OV.style.opacity='0';setTimeout(()=>{OV.style.display='none';},900);},1200);
+  }
+  // Load MediaPipe scripts with a hard 8s timeout
+  function loadScript(src){
+    return new Promise((res,rej)=>{
+      // If already loaded, resolve immediately
+      if(src.includes('camera_utils')&&typeof CameraUtils!=='undefined'){res();return;}
+      if(src.includes('/hands')&&typeof Hands!=='undefined'){res();return;}
+      const sc=document.createElement('script');
+      sc.src=src; sc.crossOrigin='anonymous';
+      sc.onload=res; sc.onerror=()=>rej(new Error('Failed: '+src));
+      document.head.appendChild(sc);
+      setTimeout(()=>rej(new Error('Timeout: '+src)),8000);
+    });
+  }
+  try{
+    OT.textContent='LOADING TRACKING';OS.textContent='connecting to hand model…';
+    await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js');
+    await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js');
+    OT.textContent='REQUESTING CAMERA';OS.textContent='allow camera access when prompted';
+    let stream;
+    try{
+      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}}});
+    }catch(_){
+      try{stream=await navigator.mediaDevices.getUserMedia({video:true});}
+      catch(e2){throw new Error('Camera denied: '+e2.message);}
+    }
+    VID.srcObject=stream; await VID.play();
+    VID.style.opacity='0.20';
+    OT.textContent='LOADING MODEL';OS.textContent='initialising hand model…';
+    const mpH=new Hands({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+    mpH.setOptions({maxNumHands:2,modelComplexity:1,minDetectionConfidence:.60,minTrackingConfidence:.50,selfieMode:false});
+    mpH.onResults(res=>{
+      const lms=res.multiHandLandmarks||[];
+      const hds=res.multiHandedness||[];
+      while(hands.length<lms.length)hands.push(new Hand('?'));
+      while(hands.length>lms.length){const h=hands.pop();if(h.orb){h.orb.grabbed=false;h.orb.targetR=h.orb.baseR;}}
+      lms.forEach((lm,i)=>{hands[i].label=hds[i]?.label||'?';});
+      // Right hand grabs, left hand zooms
+      const rh=hands.find(h=>h.label==='Right')||hands[0]||null;
+      const lh=hands.find(h=>h.label==='Left')||null;
+      if(rh)rh.update(lms[hands.indexOf(rh)],lh);
+      if(lh&&lh!==rh)lh.update(lms[hands.indexOf(lh)],null);
+    });
+    const cam=new Camera(VID,{
+      onFrame:async()=>{if(!handBusy){handBusy=true;try{await mpH.send({image:VID});}catch(e){}handBusy=false;}},
+      width:640,height:480
+    });
+    cam.start();
+    tracking=true;
+    dismiss('✋ HAND TRACKING ACTIVE','pinch · spread = zoom · two hands = reaction');
+    return;
+  }catch(e){
+    console.warn('[HandTracking]',e.message);
+    dismiss('🖱 MOUSE MODE','hand tracking unavailable — using mouse & touch');
+  }
+}
+initHands();
+
+
+// ── HINT SYSTEM ───────────────────────────────────────────────────────────────
+const HINTS=[
+  '💡 Try: H + H + O = Water',
+  '💡 Try: Na + Cl = Salt',
+  '💡 Try: C + O + O = CO₂',
+  '💡 Try: N + H + H + H = Ammonia',
+  '💡 Try: Fe + C = Steel',
+  '💡 Try: Au + Cu = Rose Gold',
+  '💡 Try: U + Pu = ☢ Nuclear!',
+  '💡 Try: H + Cl = Hydrochloric Acid',
+  '💡 Try: Si + O + O = Quartz',
+  '💡 Try: Fe + Fe + O + O + O = Rust',
+  '💡 Grab an atom and spread fingers to zoom',
+  '💡 Right hand grabs · Left hand spread = zoom level',
+  '💡 Drop atoms anywhere — a fresh one respawns!',
+];
+let hintIdx=Math.random()*HINTS.length|0, hintTmr=null;
+function showHint(){
+  const el=document.getElementById('hint');
+  if(!el)return;
+  el.textContent=HINTS[hintIdx%HINTS.length]; hintIdx++;
+  el.style.opacity='1';
+  clearTimeout(hintTmr);
+  hintTmr=setTimeout(()=>{el.style.opacity='0';setTimeout(showHint,12000);},6000);
+}
+setTimeout(showHint,5000); // first hint after 5s
+
+// ── UI ────────────────────────────────────────────────────────────────────────
+function updateDisc(){
+  const el=document.getElementById('disc');
+  if(!discovered.size){el.textContent='grab elements · bring together to react · pinch to zoom';return;}
+  el.innerHTML='<span style="color:rgba(255,215,0,.38)">discovered: </span>'+[...discovered].join(' · ');
+}
+let toastTmr=null;
+function showToast(msg){
+  const el=document.getElementById('toast');el.textContent=msg;el.style.opacity='1';
+  clearTimeout(toastTmr);toastTmr=setTimeout(()=>el.style.opacity='0',3000);
+}
+function buildLegend(){
+  const el=document.getElementById('legend');
+  el.innerHTML=Object.entries(GN).map(([k,v])=>`<div class="leg"><div class="legdot" style="background:${GC[k]}"></div>${v}</div>`).join('');
+}
+buildLegend();
+
+function drawCursor(){
+  if(!mouse.active||tracking)return;
+  X.save();
+  X.strokeStyle=mouse.orb?'rgba(255,255,120,.45)':'rgba(255,255,255,.16)';
+  X.lineWidth=1.1;X.shadowBlur=mouse.orb?8:3;X.shadowColor=mouse.orb?'#ffff88':'#fff';
+  X.beginPath();X.arc(mouse.x,mouse.y,mouse.orb?13:8,0,TAU);X.stroke();
+  X.fillStyle='rgba(255,255,255,.6)';X.shadowBlur=0;
+  X.beginPath();X.arc(mouse.x,mouse.y,1.4,0,TAU);X.fill();
+  X.restore();
+}
+
+// ── DRAW GRID BACKGROUND CELLS ────────────────────────────────────────────────
+function drawGridBg(){
+  const cw=gridCell(),{ox,oy}=gridOrigin(cw);
+  for(const[sym,el]of Object.entries(EL)){
+    const[period,group]=el.pos;
+    const col=group-1;
+    const row=period<=7 ? period-1 : 7+LAN_GAP+(period-8);
+    const cx=ox+col*cw+cw/2, cy=oy+row*cw+cw/2;
+    const x=cx-cw/2+1, y=cy-cw/2+1, w=cw-2, h=cw-2;
+    // Cell bg
+    X.fillStyle=rgba(el.c,.04);
+    X.strokeStyle=rgba(el.c,.13);
+    X.lineWidth=.5;
+    X.beginPath();X.roundRect(x,y,w,h,2);X.fill();X.stroke();
+    // Period/group label for first col/row
+    if(group===1&&period<=7){
+      X.fillStyle='rgba(255,255,255,.08)';
+      X.font=`${Math.max(5,cw*.18)|0}px monospace`;
+      X.textAlign='left';X.textBaseline='top';
+      X.fillText(period,x+2,y+1);
+    }
+  }
+}
+
+// ── MAIN LOOP ─────────────────────────────────────────────────────────────────
+let lt=0,fc=0,ft=0;
+const HUD=document.getElementById('hud');
+
+function loop(ts){
+  requestAnimationFrame(loop);
+  const dt=Math.min(3,(ts-lt)/16.67);lt=ts;
+  fc++;
+  if(ts-ft>=1000){
+    const live=orbs.filter(o=>o.alive).length;
+    HUD.textContent=`${fc}fps · ${live} active\n${tracking?'✋ hand tracking':'🖱 mouse'} · [R] reset · [F] fullscreen`;
+    fc=0;ft=ts;
+  }
+  if(cooldown>0)cooldown-=dt;
+  checkCollisions();
+  for(const o of orbs)o.update(dt,ts);
+  for(const e of effects)e.update(dt);
+
+  // DRAW
+  X.fillStyle='#000';X.fillRect(0,0,W,H);
+  // Camera feed — mirrored for wall projection
+  if(VID.readyState>=2){
+    X.save();
+    X.translate(W,0);X.scale(-1,1);
+    X.globalAlpha=0.36;
+    X.drawImage(VID,0,0,W,H);
+    X.restore();
+    // Vignette to keep atoms readable
+    const vig=X.createRadialGradient(W/2,H/2,H*0.25,W/2,H/2,H*0.75);
+    vig.addColorStop(0,'rgba(0,0,0,0)');vig.addColorStop(1,'rgba(0,0,0,0.68)');
+    X.fillStyle=vig;X.fillRect(0,0,W,H);
+  }
+  drawStars(ts);
+  drawGridBg();
+  for(const o of orbs)o.draw(ts);
+  for(const e of effects)e.draw();
+  for(const h of hands)h.draw();
+  drawCursor();
+
+  for(let i=effects.length-1;i>=0;i--)if(effects[i].done)effects.splice(i,1);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
