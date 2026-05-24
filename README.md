@@ -98,7 +98,8 @@ Allow camera access when prompted. That's it.
 
 ## License
 
-MIT License — free to use, modify, and share.
+© 2025 Abbas Madwani. All rights reserved.
+This project and its source code are publicly visible for review and educational purposes only. No part of this project may be copied, modified, distributed, or used in any form without explicit written permission from the author.
 
 ---
 
