@@ -24,6 +24,7 @@ Aligned with **UN Sustainable Development Goal 4 — Quality Education**.
 ## Games
 
 ### 🧪 Plasma Elements
+22cd25-spec.github.io/Play-N-Learn/periodic-table/plasma-grid.html
 **Subject:** Chemistry · **Grade Level:** 6th – 9th Grade
 
 An interactive periodic table where students physically drag atoms together using hand gestures to trigger real chemical reactions.
@@ -39,6 +40,7 @@ An interactive periodic table where students physically drag atoms together usin
 ---
 
 ### ➕ Math Simon Says
+22cd25-spec.github.io/Play-N-Learn/Math-simon-says/math-simon-says.html
 **Subject:** Mathematics · **Grade Level:** Kindergarten (Ages 4–6)
 
 A full-body math game where kids answer arithmetic questions by jumping or squatting — the right answer is tied to the right movement.
